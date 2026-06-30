@@ -35,6 +35,7 @@ struct EnergyTerms {
     double sigma0_estimate = 0.0;
     double ion_smooth = 0.0;
     double total_with_ion_smooth = 0.0;
+    double nonlocal = 0.0;
 };
 
 std::vector<double> build_density_from_orbitals(

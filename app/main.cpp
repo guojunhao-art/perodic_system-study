@@ -78,11 +78,27 @@ int main(int argc, char** argv) {
     ion.sigma = 0.7;
 
     ion.short_amp = 1.0;
-    ion.short_rc = 0.5;
-    ion.beta_D = 1;
+
     if (argc > 5) {
         ion.sigma = std::atof(argv[5]); //平滑因子
     }
+    
+
+    double beta_s_D = 0.0;
+    double beta_p_D = 0.0;
+    ion.beta_s_rc = 0.5;
+    ion.beta_p_rc = 0.5;
+
+    if (argc > 6) {
+        beta_s_D = std::atof(argv[6]);
+    }
+
+    if (argc > 7) {
+        beta_p_D = std::atof(argv[7]);
+    }
+
+    ion.beta_s_D = beta_s_D;
+    ion.beta_p_D = beta_p_D;
     ions.push_back(ion);
 
     LocalPotentialComponents local_pot =
@@ -92,7 +108,7 @@ int main(int argc, char** argv) {
             ions
         );
 
-    auto projectors = build_s_gaussian_projectors(lattice, basis, ions);
+    auto projectors = build_gaussian_nonlocal_projectors(lattice, basis, ions);
     std::vector<double> Vion = local_pot.Vtotal;
 
     const double Eion_smooth = local_pot.Eion_smooth; 
@@ -191,6 +207,14 @@ int main(int argc, char** argv) {
                 deg_tol
             );
 
+        const double Enl =
+            compute_nonlocal_energy(
+                projectors,
+                ks.eigenvectors.leftCols(nbands_solve),
+                occ.occ
+            );
+        std::cout << "E_NL = " << Enl << "\n";
+
 
         /*
          * 3. Build output density from occupied orbitals.
@@ -252,6 +276,7 @@ int main(int argc, char** argv) {
             );
         E.ion_smooth = Eion_smooth;
         E.total_with_ion_smooth = E.total + Eion_smooth;
+        E.nonlocal = Enl;
 
         std::cout << "E_electronic = " << E.total
               << "  E_ion_smooth = " << E.ion_smooth

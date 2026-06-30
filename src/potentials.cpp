@@ -1,8 +1,19 @@
 #include "potentials.hpp"
 
+#include <iostream>
 #include <complex>
 #include <cmath>
 #include <stdexcept>
+
+static void normalize_projector(NonlocalProjector& proj) {
+    const double nrm = proj.beta_G.norm();
+
+    if (nrm < 1.0e-14) {
+        throw std::runtime_error("Projector norm too small.");
+    }
+
+    proj.beta_G /= nrm;
+}
 
 std::vector<std::complex<double>> build_gaussian_ion_density_G(
     const Lattice& lattice,
@@ -339,7 +350,7 @@ LocalPotentialComponents build_local_pseudopotential_components(
     return out;
 }
 
-std::vector<NonlocalProjector> build_s_gaussian_projectors(
+std::vector<NonlocalProjector> build_gaussian_nonlocal_projectors(
     const Lattice& lattice,
     const PlaneWaveBasis3D& basis,
     const std::vector<Ion>& ions) {
@@ -347,54 +358,92 @@ std::vector<NonlocalProjector> build_s_gaussian_projectors(
     std::vector<NonlocalProjector> projectors;
 
     for (const Ion& ion : ions) {
-        if (std::abs(ion.beta_D) < 1.0e-14) {
-            continue;
-        }
-
-        if (ion.beta_rc <= 0.0) {
-            throw std::runtime_error("Ion beta_rc must be positive.");
-        }
-
-        NonlocalProjector proj;
-        proj.beta_G = Eigen::VectorXcd::Zero(basis.size());
-        proj.D = ion.beta_D;
-
         const Eigen::Vector3d R =
             lattice.cart_from_frac(ion.frac_position);
 
-        for (int ig = 0; ig < basis.size(); ++ig) {
-            const Eigen::Vector3d G =
-                basis.gvectors[ig].G_cart;
+        /*
+         * 1. s-like Gaussian projector
+         */
+        if (std::abs(ion.beta_s_D) > 1.0e-14) {
+            if (ion.beta_s_rc <= 0.0) {
+                throw std::runtime_error("Ion beta_s_rc must be positive.");
+            }
 
-            const double G2 = G.squaredNorm();
+            NonlocalProjector proj;
+            proj.beta_G = Eigen::VectorXcd::Zero(basis.size());
+            proj.D = ion.beta_s_D;
 
-            const double phase =
-                -G.dot(R);
+            for (int ig = 0; ig < basis.size(); ++ig) {
+                const Eigen::Vector3d G =
+                    basis.gvectors[ig].G_cart;
 
-            const std::complex<double> exp_phase(
-                std::cos(phase),
-                std::sin(phase)
-            );
+                const double G2 = G.squaredNorm();
 
-            const double smooth =
-                std::exp(
-                    -0.5 * ion.beta_rc * ion.beta_rc * G2
+                const double phase =
+                    -G.dot(R);
+
+                const std::complex<double> exp_phase(
+                    std::cos(phase),
+                    std::sin(phase)
                 );
 
-            proj.beta_G[ig] =
-                smooth * exp_phase;
+                const double smooth =
+                    std::exp(
+                        -0.5 * ion.beta_s_rc * ion.beta_s_rc * G2
+                    );
+
+                proj.beta_G[ig] =
+                    smooth * exp_phase;
+            }
+
+            normalize_projector(proj);
+            projectors.push_back(proj);
         }
 
-        const double nrm =
-            proj.beta_G.norm();
+        /*
+         * 2. p-like Gaussian projectors: px, py, pz
+         *
+         * beta_px(G) ~ i Gx exp(-0.5 rc^2 G^2) exp(-i G.R)
+         */
+        if (std::abs(ion.beta_p_D) > 1.0e-14) {
+            if (ion.beta_p_rc <= 0.0) {
+                throw std::runtime_error("Ion beta_p_rc must be positive.");
+            }
 
-        if (nrm < 1.0e-14) {
-            throw std::runtime_error("Projector norm too small.");
+            for (int idir = 0; idir < 3; ++idir) {
+                NonlocalProjector proj;
+                proj.beta_G = Eigen::VectorXcd::Zero(basis.size());
+                proj.D = ion.beta_p_D;
+
+                for (int ig = 0; ig < basis.size(); ++ig) {
+                    const Eigen::Vector3d G =
+                        basis.gvectors[ig].G_cart;
+
+                    const double G2 = G.squaredNorm();
+
+                    const double phase =
+                        -G.dot(R);
+
+                    const std::complex<double> exp_phase(
+                        std::cos(phase),
+                        std::sin(phase)
+                    );
+
+                    const double smooth =
+                        std::exp(
+                            -0.5 * ion.beta_p_rc * ion.beta_p_rc * G2
+                        );
+
+                    const std::complex<double> imag_unit(0.0, 1.0);
+
+                    proj.beta_G[ig] =
+                        imag_unit * G[idir] * smooth * exp_phase;
+                }
+
+                normalize_projector(proj);
+                projectors.push_back(proj);
+            }
         }
-
-        proj.beta_G /= nrm;
-
-        projectors.push_back(proj);
     }
 
     return projectors;
@@ -419,4 +468,83 @@ Eigen::VectorXcd apply_nonlocal_projectors(
     }
 
     return out;
+}
+
+double compute_nonlocal_energy(
+    const std::vector<NonlocalProjector>& projectors,
+    const Eigen::MatrixXcd& C,
+    const std::vector<double>& occupations) {
+
+    if (static_cast<int>(occupations.size()) != C.cols()) {
+        throw std::runtime_error(
+            "Occupation size mismatch in compute_nonlocal_energy."
+        );
+    }
+
+    double e = 0.0;
+
+    for (int ib = 0; ib < C.cols(); ++ib) {
+        const double occ = occupations[ib];
+
+        if (std::abs(occ) < 1.0e-14) {
+            continue;
+        }
+
+        for (const NonlocalProjector& proj : projectors) {
+            if (proj.beta_G.size() != C.rows()) {
+                throw std::runtime_error(
+                    "Projector size mismatch in compute_nonlocal_energy."
+                );
+            }
+
+            const std::complex<double> overlap =
+                proj.beta_G.dot(C.col(ib));
+
+            e += occ * proj.D * std::norm(overlap);
+        }
+    }
+
+    return e;
+}
+
+void print_nonlocal_projector_diagnostics(
+    const std::vector<NonlocalProjector>& projectors,
+    const Eigen::MatrixXcd& C,
+    int nprint) {
+
+    const int nb =
+        std::min(nprint, static_cast<int>(C.cols()));
+
+    for (int ib = 0; ib < nb; ++ib) {
+        std::cout << "  band " << ib << " nonlocal:";
+
+        double total = 0.0;
+
+        for (int ip = 0; ip < static_cast<int>(projectors.size()); ++ip) {
+            const NonlocalProjector& proj = projectors[ip];
+
+            if (proj.beta_G.size() != C.rows()) {
+                throw std::runtime_error(
+                    "Projector size mismatch in diagnostics."
+                );
+            }
+
+            const std::complex<double> overlap =
+                proj.beta_G.dot(C.col(ib));
+
+            const double weight =
+                std::norm(overlap);
+
+            const double contrib =
+                proj.D * weight;
+
+            total += contrib;
+
+            std::cout << " p" << ip
+                      << " w=" << weight
+                      << " Dw=" << contrib;
+        }
+
+        std::cout << " total=" << total << "\n";
+    }
 }

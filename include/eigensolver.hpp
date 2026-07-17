@@ -35,7 +35,8 @@ DavidsonResult davidson_lowest_eigenstates(
     int max_subspace = 40,
     double residual_tol = 1.0e-10,
     double denom_floor = 1.0e-6,
-    const std::vector<NonlocalProjector>* projectors = nullptr);
+    const std::vector<NonlocalProjector>* projectors = nullptr,
+    bool verbose = true);
 
 struct CanonicalBlock {
     Eigen::MatrixXcd C;

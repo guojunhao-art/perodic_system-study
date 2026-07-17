@@ -25,9 +25,11 @@ struct Ion {
     double short_amp = 0.0;
     double short_rc = 0.5;
     
-    // toy nonlocal projector
-    double beta_rc = 0.5;
-    double beta_D = 0.0;
+    // Toy separable nonlocal projectors.
+    double beta_s_rc = 0.5;
+    double beta_s_D = 0.0;
+    double beta_p_rc = 0.5;
+    double beta_p_D = 0.0;
 };
 
 struct LocalPotentialComponents {
@@ -69,7 +71,7 @@ LocalPotentialComponents build_local_pseudopotential_components(
     FFTWorkspace& fft,
     const std::vector<Ion>& ions);
 
-std::vector<NonlocalProjector> build_s_gaussian_projectors(
+std::vector<NonlocalProjector> build_gaussian_nonlocal_projectors(
     const Lattice& lattice,
     const PlaneWaveBasis3D& basis,
     const std::vector<Ion>& ions);
@@ -77,3 +79,13 @@ std::vector<NonlocalProjector> build_s_gaussian_projectors(
 Eigen::VectorXcd apply_nonlocal_projectors(
     const std::vector<NonlocalProjector>& projectors,
     const Eigen::VectorXcd& c);
+
+double compute_nonlocal_energy(
+    const std::vector<NonlocalProjector>& projectors,
+    const Eigen::MatrixXcd& C,
+    const std::vector<double>& occupations);
+
+void print_nonlocal_projector_diagnostics(
+    const std::vector<NonlocalProjector>& projectors,
+    const Eigen::MatrixXcd& C,
+    int nprint);

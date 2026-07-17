@@ -1,11 +1,23 @@
 CXX ?= g++
-CXXFLAGS ?= -O2 -std=c++17 -Iinclude -I/usr/include/eigen3 -I/home/guojunhao/anaconda3/envs/p4env/include -L/home/guojunhao/anaconda3/envs/p4env/lib
-LDFLAGS ?= -lfftw3 -lm
+CXXFLAGS ?= -O2 -std=c++17
+CPPFLAGS ?= -Iinclude -I/usr/include/eigen3
+LDFLAGS ?=
+LDLIBS ?= -lfftw3 -lm
 
-SRC = src/*.cpp app/main.cpp
+CORE_SRC = $(wildcard src/*.cpp)
 
-fft: $(SRC)
-	$(CXX) $(CXXFLAGS) $(SRC) -o fft $(LDFLAGS)
+fft: $(CORE_SRC) app/main.cpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(LDLIBS)
+
+test_forces: $(CORE_SRC) tests/test_forces.cpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(LDLIBS)
+
+test_scf_force_fd: $(CORE_SRC) tests/test_scf_force_fd.cpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(LDLIBS)
+
+test: test_forces test_scf_force_fd
+	./test_forces
+	./test_scf_force_fd
 
 clean:
-	rm -f fft
+	rm -f fft test_forces test_scf_force_fd

@@ -3,6 +3,7 @@
 #include "mixing.hpp"
 #include "scf_modules.hpp"
 #include "potentials.hpp"
+#include "forces.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -144,6 +145,11 @@ int main(int argc, char** argv) {
 
     double E_old = 0.0;
 
+    Eigen::MatrixXcd final_C;
+    std::vector<double> final_occupations;
+    std::vector<double> final_density;
+    bool have_final_state = false;
+
     PulayMixer pulay;
     pulay.alpha = 0.10;
     pulay.max_history = 6;
@@ -272,11 +278,11 @@ int main(int argc, char** argv) {
                 xout.Ex,
                 dV,
                 entropy_for_energy,
-                sigma_for_energy
+                sigma_for_energy,
+                Enl
             );
         E.ion_smooth = Eion_smooth;
         E.total_with_ion_smooth = E.total + Eion_smooth;
-        E.nonlocal = Enl;
 
         std::cout << "E_electronic = " << E.total
               << "  E_ion_smooth = " << E.ion_smooth
@@ -305,6 +311,11 @@ int main(int argc, char** argv) {
             (scf_iter == 0)
             ? 0.0
             : std::abs(energy_for_convergence - E_old);
+
+        final_C = ks.eigenvectors.leftCols(nbands_solve);
+        final_occupations = occ.occ;
+        final_density = rho_out;
+        have_final_state = true;
 
         std::cout << "SCF iter "
                   << std::setw(3) << scf_iter + 1
@@ -347,6 +358,30 @@ int main(int argc, char** argv) {
          * 6. Use current eigenvectors as next initial guess.
          */
         C_guess = ks.eigenvectors.leftCols(nbands_solve);
+    }
+
+    if (have_final_state) {
+        const auto n_G = build_density_G(fft, final_density);
+        const IonicForceComponents forces = compute_ionic_forces(
+            lattice,
+            grid,
+            basis,
+            ions,
+            n_G,
+            projectors,
+            final_C,
+            final_occupations
+        );
+
+        std::cout << "Ionic Hellmann-Feynman forces (Ha/Bohr):\n";
+        for (int iion = 0; iion < static_cast<int>(ions.size()); ++iion) {
+            std::cout << "  ion " << iion
+                      << "  F_loc = " << forces.local[iion].transpose()
+                      << "  F_II = " << forces.ion_ion[iion].transpose()
+                      << "  F_NL = " << forces.nonlocal[iion].transpose()
+                      << "  F_total = " << forces.total[iion].transpose()
+                      << "\n";
+        }
     }
 
 

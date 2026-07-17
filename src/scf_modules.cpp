@@ -560,7 +560,8 @@ EnergyTerms compute_total_energy(
     double Ex,
     double dV,
     double electronic_entropy,
-    double sigma) {
+    double sigma,
+    double nonlocal_energy) {
 
     EnergyTerms e;
 
@@ -573,12 +574,14 @@ EnergyTerms compute_total_energy(
     }
 
     e.exchange = Ex;
+    e.nonlocal = nonlocal_energy;
 
     e.total =
         e.kinetic
         + e.external
         + e.hartree
-        + e.exchange;
+        + e.exchange
+        + e.nonlocal;
 
     e.electronic_entropy = electronic_entropy;
     e.entropy_correction = sigma * electronic_entropy;
@@ -589,7 +592,6 @@ EnergyTerms compute_total_energy(
     e.sigma0_estimate =
         0.5 * (e.total + e.free_energy);
 
-    return e;
     return e;
 }
 

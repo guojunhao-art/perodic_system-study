@@ -357,7 +357,8 @@ std::vector<NonlocalProjector> build_gaussian_nonlocal_projectors(
 
     std::vector<NonlocalProjector> projectors;
 
-    for (const Ion& ion : ions) {
+    for (int iion = 0; iion < static_cast<int>(ions.size()); ++iion) {
+        const Ion& ion = ions[iion];
         const Eigen::Vector3d R =
             lattice.cart_from_frac(ion.frac_position);
 
@@ -372,6 +373,7 @@ std::vector<NonlocalProjector> build_gaussian_nonlocal_projectors(
             NonlocalProjector proj;
             proj.beta_G = Eigen::VectorXcd::Zero(basis.size());
             proj.D = ion.beta_s_D;
+            proj.ion_index = iion;
 
             for (int ig = 0; ig < basis.size(); ++ig) {
                 const Eigen::Vector3d G =
@@ -414,6 +416,7 @@ std::vector<NonlocalProjector> build_gaussian_nonlocal_projectors(
                 NonlocalProjector proj;
                 proj.beta_G = Eigen::VectorXcd::Zero(basis.size());
                 proj.D = ion.beta_p_D;
+                proj.ion_index = iion;
 
                 for (int ig = 0; ig < basis.size(); ++ig) {
                     const Eigen::Vector3d G =

@@ -110,7 +110,8 @@ EnergyTerms compute_total_energy(
     double Ex,
     double dV,
     double electronic_entropy = 0.0,
-    double sigma = 0.0);
+    double sigma = 0.0,
+    double nonlocal_energy = 0.0);
 
 double mix_density(
     std::vector<double>& rho,

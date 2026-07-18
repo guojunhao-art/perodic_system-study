@@ -8,6 +8,12 @@
 #include <iosfwd>
 #include <vector>
 
+enum class SCFVerbosity {
+    Silent,
+    Compact,
+    Detailed
+};
+
 /*
  * Numerical controls for one self-consistent Kohn--Sham calculation.
  * Energy-like quantities and tolerances use Hartree atomic units.
@@ -35,7 +41,9 @@ struct SCFOptions {
     int pulay_min_history = 2;
     double pulay_regularization = 1.0e-12;
 
-    /* Print up to this many bands every band_print_interval iterations. */
+    SCFVerbosity verbosity = SCFVerbosity::Compact;
+
+    /* Used only by Detailed output. */
     int bands_to_print = 8;
     int band_print_interval = 5;
 };

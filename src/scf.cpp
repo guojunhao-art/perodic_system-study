@@ -53,7 +53,48 @@ void validate_scf_inputs(
     }
 }
 
-void print_iteration(
+double maximum_residual(const std::vector<double>& residuals) {
+    double result = 0.0;
+    for (double residual : residuals) {
+        result = std::max(result, residual);
+    }
+    return result;
+}
+
+void print_compact_header(std::ostream& out) {
+    out << "\n"
+        << "-------------------------------- electronic minimization "
+        << "--------------------------------\n"
+        << "          N                     E              dE"
+        << "        rms(rho)  Ndiag      rms(eig)\n";
+}
+
+void print_compact_iteration(
+    std::ostream& out,
+    int iteration,
+    const SCFResult& result,
+    double signed_dE,
+    double drho,
+    int davidson_iterations,
+    double eigensolver_residual) {
+
+    const auto old_flags = out.flags();
+    const auto old_precision = out.precision();
+
+    out << "DAV: " << std::setw(4) << iteration + 1
+        << "  " << std::scientific << std::setprecision(12)
+        << std::setw(20) << result.variational_energy
+        << "  " << std::setprecision(4) << std::setw(12) << signed_dE
+        << "  " << std::setw(12) << drho
+        << "  " << std::setw(5) << davidson_iterations
+        << "  " << std::setw(12) << eigensolver_residual
+        << "\n";
+
+    out.flags(old_flags);
+    out.precision(old_precision);
+}
+
+void print_detailed_iteration(
     std::ostream& out,
     int iteration,
     const SCFOptions& options,
@@ -95,6 +136,29 @@ void print_iteration(
                 << "\n";
         }
     }
+}
+
+void print_compact_summary(
+    std::ostream& out,
+    const SCFResult& result,
+    double signed_dE) {
+
+    const auto old_flags = out.flags();
+    const auto old_precision = out.precision();
+    const double free_energy_with_ions =
+        result.energy.free_energy + result.energy.ion_smooth;
+    const double sigma0_with_ions =
+        result.energy.sigma0_estimate + result.energy.ion_smooth;
+
+    out << "--------------------------------------------------------------------------------\n"
+        << "  1 F= " << std::scientific << std::setprecision(12)
+        << std::setw(20) << free_energy_with_ions
+        << " E0= " << std::setw(20) << sigma0_with_ions
+        << "  d E = " << std::setprecision(4) << std::setw(12) << signed_dE
+        << "\n";
+
+    out.flags(old_flags);
+    out.precision(old_precision);
 }
 
 } // namespace
@@ -152,6 +216,13 @@ SCFResult run_scf(
 
     SCFResult result;
     double previous_energy = 0.0;
+    double last_signed_energy_change = 0.0;
+    const bool logging_enabled =
+        log_stream != nullptr && options.verbosity != SCFVerbosity::Silent;
+
+    if (logging_enabled && options.verbosity == SCFVerbosity::Compact) {
+        print_compact_header(*log_stream);
+    }
 
     for (int iter = 0; iter < options.max_iterations; ++iter) {
         const auto VH = build_hartree_potential(lattice, fft, rho);
@@ -173,7 +244,7 @@ SCFResult run_scf(
             options.eigensolver_tolerance,
             options.eigensolver_denom_floor,
             projector_ptr,
-            log_stream != nullptr
+            logging_enabled && options.verbosity == SCFVerbosity::Detailed
         );
         if (!ks.converged) {
             throw std::runtime_error("Davidson eigensolver did not converge during SCF.");
@@ -227,9 +298,10 @@ SCFResult run_scf(
         const double energy_for_convergence = finite_temperature
             ? energy.free_energy
             : energy.total;
-        const double dE = iter == 0
+        const double signed_dE = iter == 0
             ? 0.0
-            : std::abs(energy_for_convergence - previous_energy);
+            : energy_for_convergence - previous_energy;
+        const double dE = std::abs(signed_dE);
         const double drho = pulay_mix_density(
             pulay,
             rho,
@@ -249,9 +321,21 @@ SCFResult run_scf(
         result.electron_number_from_density =
             electron_number_from_density(rho_out, dV);
         result.variational_energy = energy_for_convergence + ion_ion_energy;
+        last_signed_energy_change = signed_dE;
 
-        if (log_stream != nullptr) {
-            print_iteration(
+        if (logging_enabled && options.verbosity == SCFVerbosity::Compact) {
+            print_compact_iteration(
+                *log_stream,
+                iter,
+                result,
+                signed_dE,
+                drho,
+                ks.iterations,
+                maximum_residual(ks.residual_norms)
+            );
+        } else if (logging_enabled &&
+                   options.verbosity == SCFVerbosity::Detailed) {
+            print_detailed_iteration(
                 *log_stream,
                 iter,
                 options,
@@ -266,7 +350,8 @@ SCFResult run_scf(
             drho < options.density_tolerance &&
             dE < options.energy_tolerance) {
             result.converged = true;
-            if (log_stream != nullptr) {
+            if (logging_enabled &&
+                options.verbosity == SCFVerbosity::Detailed) {
                 *log_stream << "SCF converged.\n";
             }
             break;
@@ -274,6 +359,10 @@ SCFResult run_scf(
 
         previous_energy = energy_for_convergence;
         C_guess = orbitals;
+    }
+
+    if (logging_enabled && options.verbosity == SCFVerbosity::Compact) {
+        print_compact_summary(*log_stream, result, last_signed_energy_change);
     }
 
     return result;

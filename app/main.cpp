@@ -42,9 +42,6 @@ int main(int argc, char** argv) {
     PlaneWaveBasis3D basis;
     basis.generate(lattice, Eigen::Vector3d::Zero(), ecut);
 
-    std::cout << std::setprecision(16);
-    std::cout << "Basis size = " << basis.size() << "\n";
-
     Ion ion;
     ion.frac_position = Eigen::Vector3d(0.5, 0.5, 0.5);
     ion.Z = nelec;
@@ -69,9 +66,6 @@ int main(int argc, char** argv) {
     const auto projectors =
         build_gaussian_nonlocal_projectors(lattice, basis, ions);
 
-    std::cout << "Smooth ion-ion energy = "
-              << local_potential.Eion_smooth << "\n";
-
     SCFOptions options;
     options.nelec = nelec;
     options.nbands = static_cast<int>(std::max(3.0 * nelec, 10.0));
@@ -87,6 +81,21 @@ int main(int argc, char** argv) {
     options.pulay_max_history = 6;
     options.pulay_min_history = 2;
     options.pulay_regularization = 1.0e-12;
+    options.verbosity = SCFVerbosity::Compact;
+
+    std::cout << "\n"
+              << " PWDFT toy code: Gamma-point plane-wave calculation\n"
+              << " -------------------------------------------------------------------------------\n"
+              << "  NPLWV  = " << basis.size()
+              << "    NGX = " << grid.n1
+              << "    NGY = " << grid.n2
+              << "    NGZ = " << grid.n3 << "\n"
+              << "  NELECT = " << nelec
+              << "    NBANDS = " << options.nbands
+              << "    ENCUT = " << ecut << " Ha\n"
+              << "  NIONS  = " << ions.size()
+              << "    EDIFF = " << options.energy_tolerance
+              << "    EDIFFRHO = " << options.density_tolerance << "\n";
 
     const SCFResult scf = run_scf(
         lattice,
@@ -116,15 +125,42 @@ int main(int argc, char** argv) {
         scf.occupations.occ
     );
 
-    std::cout << "Ionic Hellmann-Feynman forces (Ha/Bohr):\n";
+    const double energy_without_entropy =
+        scf.energy.total + scf.energy.ion_smooth;
+    const double sigma0_energy =
+        scf.energy.sigma0_estimate + scf.energy.ion_smooth;
+
+    std::cout << "\n"
+              << "  FREE ENERGIE OF THE ION-ELECTRON SYSTEM (Ha)\n"
+              << "  ---------------------------------------------------\n"
+              << std::setprecision(12) << std::scientific
+              << "  free  energy   TOTEN  = " << std::setw(20)
+              << scf.variational_energy << "\n"
+              << "  energy  without entropy = " << std::setw(18)
+              << energy_without_entropy
+              << "  energy(sigma->0) = " << std::setw(18)
+              << sigma0_energy << "\n\n";
+
+    std::cout << "  POSITION (Bohr)" << std::setw(45)
+              << "TOTAL-FORCE (Ha/Bohr)\n"
+              << "  -----------------------------------------------------------------------------------\n";
     for (int iion = 0; iion < static_cast<int>(ions.size()); ++iion) {
-        std::cout << "  ion " << iion
-                  << "  F_loc = " << forces.local[iion].transpose()
-                  << "  F_II = " << forces.ion_ion[iion].transpose()
-                  << "  F_NL = " << forces.nonlocal[iion].transpose()
-                  << "  F_total = " << forces.total[iion].transpose()
+        const Eigen::Vector3d position =
+            lattice.cart_from_frac(ions[iion].frac_position);
+        std::cout << "  " << std::fixed << std::setprecision(8)
+                  << std::setw(14) << position[0]
+                  << std::setw(14) << position[1]
+                  << std::setw(14) << position[2]
+                  << "    "
+                  << std::setw(14) << forces.total[iion][0]
+                  << std::setw(14) << forces.total[iion][1]
+                  << std::setw(14) << forces.total[iion][2]
                   << "\n";
     }
+    std::cout << "  -----------------------------------------------------------------------------------\n"
+              << "  reached required accuracy: "
+              << (scf.converged ? "electronic convergence achieved" : "no")
+              << "\n";
 
     return scf.converged ? 0 : 1;
 }

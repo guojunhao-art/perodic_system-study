@@ -14,6 +14,7 @@ add_library(pw_dft_core
     src/mixing.cpp
     src/potentials.cpp
     src/forces.cpp
+    src/radial_transform.cpp
 )
 
 target_include_directories(pw_dft_core PUBLIC include)
@@ -37,3 +38,7 @@ add_test(NAME analytic_forces COMMAND test_forces)
 add_executable(test_scf_force_fd tests/test_scf_force_fd.cpp)
 target_link_libraries(test_scf_force_fd PRIVATE pw_dft_core)
 add_test(NAME scf_force_finite_difference COMMAND test_scf_force_fd)
+
+add_executable(test_radial_transform tests/test_radial_transform.cpp)
+target_link_libraries(test_radial_transform PRIVATE pw_dft_core)
+add_test(NAME radial_fourier_bessel COMMAND test_radial_transform)

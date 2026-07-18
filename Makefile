@@ -15,9 +15,13 @@ test_forces: $(CORE_SRC) tests/test_forces.cpp
 test_scf_force_fd: $(CORE_SRC) tests/test_scf_force_fd.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-test: test_forces test_scf_force_fd
+test_radial_transform: src/radial_transform.cpp tests/test_radial_transform.cpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@
+
+test: test_forces test_scf_force_fd test_radial_transform
 	./test_forces
 	./test_scf_force_fd
+	./test_radial_transform
 
 clean:
-	rm -f fft test_forces test_scf_force_fd
+	rm -f fft test_forces test_scf_force_fd test_radial_transform

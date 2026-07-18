@@ -89,7 +89,8 @@ DavidsonResult davidson_lowest_eigenstates(
     int max_subspace,
     double residual_tol,
     double denom_floor,
-    const std::vector<NonlocalProjector>* projectors) {
+    const std::vector<NonlocalProjector>* projectors,
+    bool verbose) {
 
     const int nbasis = basis.size();
 
@@ -214,17 +215,19 @@ DavidsonResult davidson_lowest_eigenstates(
         result.residual_norms = residual_norms;
         result.converged = all_converged;
 
-        std::cout << "Davidson iter " << std::setw(3) << iter + 1
-                  << "  subspace = " << std::setw(4) << V.cols()
-                  << "  eps[0] = " << std::setw(20) << eps[0]
-                  << "  max_res = ";
+        if (verbose) {
+            std::cout << "Davidson iter " << std::setw(3) << iter + 1
+                      << "  subspace = " << std::setw(4) << V.cols()
+                      << "  eps[0] = " << std::setw(20) << eps[0]
+                      << "  max_res = ";
 
-        double max_res = 0.0;
-        for (double rn : residual_norms) {
-            max_res = std::max(max_res, rn);
+            double max_res = 0.0;
+            for (double rn : residual_norms) {
+                max_res = std::max(max_res, rn);
+            }
+
+            std::cout << max_res << "\n";
         }
-
-        std::cout << max_res << "\n";
 
         if (all_converged) {
             return result;

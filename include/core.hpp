@@ -233,4 +233,11 @@ public:
 struct NonlocalProjector {
     Eigen::VectorXcd beta_G;
     double D = 0.0;
+
+    /*
+     * Index of the ion carrying this projector.  The translational
+     * derivative d beta(G) / d R_I = -i G beta(G) contributes only to
+     * this ion's force.
+     */
+    int ion_index = -1;
 };

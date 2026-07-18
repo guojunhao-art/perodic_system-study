@@ -9,6 +9,7 @@ find_package(Eigen3 QUIET)
 add_library(pw_dft_core
     src/hamiltonian.cpp
     src/scf_modules.cpp
+    src/scf.cpp
     src/eigensolver.cpp
     src/mixing.cpp
     src/potentials.cpp

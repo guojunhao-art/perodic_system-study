@@ -1,0 +1,280 @@
+#include "scf.hpp"
+
+#include "eigensolver.hpp"
+#include "mixing.hpp"
+#include "potentials.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <iomanip>
+#include <ostream>
+#include <stdexcept>
+
+namespace {
+
+void validate_scf_inputs(
+    const PlaneWaveBasis3D& basis,
+    const FFTWorkspace& fft,
+    const std::vector<double>& ionic_potential,
+    const SCFOptions& options,
+    const SCFInitialGuess& initial_guess) {
+
+    if (options.nelec < 0.0) {
+        throw std::runtime_error("SCF electron number cannot be negative.");
+    }
+    if (options.nbands <= 0 || options.nbands > basis.size()) {
+        throw std::runtime_error("SCF band count must be in [1, basis size].");
+    }
+    if (static_cast<int>(ionic_potential.size()) != fft.grid.ngrid) {
+        throw std::runtime_error("Ionic potential size does not match FFT grid.");
+    }
+    if (options.max_iterations <= 0 ||
+        options.eigensolver_max_iterations <= 0) {
+        throw std::runtime_error("SCF and eigensolver iteration limits must be positive.");
+    }
+    if (options.occupation_mode == OccupationMode::FermiDirac &&
+        options.smearing_sigma <= 0.0) {
+        throw std::runtime_error("Fermi-Dirac occupations require positive smearing sigma.");
+    }
+    if (options.occupation_mode == OccupationMode::Fixed &&
+        static_cast<int>(options.fixed_occupations.size()) != options.nbands) {
+        throw std::runtime_error("Fixed occupations must contain one value per band.");
+    }
+    if (!initial_guess.density.empty() &&
+        static_cast<int>(initial_guess.density.size()) != fft.grid.ngrid) {
+        throw std::runtime_error("Initial density size does not match FFT grid.");
+    }
+    if (initial_guess.orbitals.size() != 0 &&
+        (initial_guess.orbitals.rows() != basis.size() ||
+         initial_guess.orbitals.cols() < options.nbands)) {
+        throw std::runtime_error(
+            "Initial orbitals need basis.size() rows and at least nbands columns."
+        );
+    }
+}
+
+void print_iteration(
+    std::ostream& out,
+    int iteration,
+    const SCFOptions& options,
+    const SCFResult& result,
+    double dE,
+    double drho,
+    int pulay_history_size) {
+
+    out << "E_NL = " << result.energy.nonlocal << "\n";
+    out << "E_electronic = " << result.energy.total
+        << "  E_ion_smooth = " << result.energy.ion_smooth
+        << "  E_total_smooth = " << result.energy.total_with_ion_smooth
+        << "\n";
+    out << "SCF iter "
+        << std::setw(3) << iteration + 1
+        << "  E = " << std::setw(20) << result.energy.total
+        << "  F = " << std::setw(20) << result.energy.free_energy
+        << "  E0est = " << std::setw(20) << result.energy.sigma0_estimate
+        << "  sigmaS = " << std::setw(12) << result.energy.entropy_correction
+        << "  dE = " << std::setw(12) << dE
+        << "  drho = " << std::setw(12) << drho
+        << "  pulay_hist = " << pulay_history_size
+        << "  Ne_occ = " << result.occupations.nelec_sum
+        << "  Ne_out = " << result.electron_number_from_density
+        << "  mu = " << result.occupations.mu
+        << "  eps0 = " << result.eigenvalues[0]
+        << "\n";
+
+    const bool print_bands =
+        iteration < options.band_print_interval ||
+        (options.band_print_interval > 0 &&
+         iteration % options.band_print_interval == 0);
+    if (print_bands) {
+        const int nprint = std::min(options.bands_to_print, options.nbands);
+        for (int ib = 0; ib < nprint; ++ib) {
+            out << "  band " << ib
+                << "  eps = " << std::setw(20) << result.eigenvalues[ib]
+                << "  occ = " << result.occupations.occ[ib]
+                << "\n";
+        }
+    }
+}
+
+} // namespace
+
+SCFResult run_scf(
+    const Lattice& lattice,
+    const PlaneWaveBasis3D& basis,
+    FFTWorkspace& fft,
+    const std::vector<double>& ionic_potential,
+    double ion_ion_energy,
+    const std::vector<NonlocalProjector>& projectors,
+    const SCFOptions& options,
+    const SCFInitialGuess& initial_guess,
+    std::ostream* log_stream) {
+
+    validate_scf_inputs(
+        basis,
+        fft,
+        ionic_potential,
+        options,
+        initial_guess
+    );
+
+    const double volume = lattice.volume();
+    const double dV = volume / static_cast<double>(fft.grid.ngrid);
+
+    std::vector<double> rho = initial_guess.density;
+    if (rho.empty()) {
+        rho.assign(fft.grid.ngrid, options.nelec / volume);
+    } else {
+        renormalize_density(rho, dV, options.nelec);
+    }
+
+    Eigen::MatrixXcd C_guess = initial_guess.orbitals;
+    if (C_guess.size() == 0) {
+        const int ntrial = std::min(
+            basis.size(),
+            options.nbands + 4
+        );
+        C_guess = initial_low_kinetic_trials(basis.size(), ntrial);
+    }
+
+    PulayMixer pulay;
+    pulay.alpha = options.mixing_alpha;
+    pulay.max_history = options.pulay_max_history;
+    pulay.min_history = options.pulay_min_history;
+    pulay.regularization = options.pulay_regularization;
+
+    const int max_subspace = options.eigensolver_max_subspace > 0
+        ? options.eigensolver_max_subspace
+        : std::min(basis.size(), 4 * options.nbands + 8);
+
+    const std::vector<NonlocalProjector>* projector_ptr =
+        projectors.empty() ? nullptr : &projectors;
+
+    SCFResult result;
+    double previous_energy = 0.0;
+
+    for (int iter = 0; iter < options.max_iterations; ++iter) {
+        const auto VH = build_hartree_potential(lattice, fft, rho);
+        const auto exchange = build_lda_exchange(rho, dV);
+        const auto Veff = combine_effective_potential(
+            ionic_potential,
+            VH,
+            exchange.Vx
+        );
+
+        const DavidsonResult ks = davidson_lowest_eigenstates(
+            basis,
+            fft,
+            Veff,
+            options.nbands,
+            C_guess,
+            options.eigensolver_max_iterations,
+            max_subspace,
+            options.eigensolver_tolerance,
+            options.eigensolver_denom_floor,
+            projector_ptr,
+            log_stream != nullptr
+        );
+        if (!ks.converged) {
+            throw std::runtime_error("Davidson eigensolver did not converge during SCF.");
+        }
+
+        const OccupationResult occupations = compute_occupations(
+            ks.eigenvalues,
+            options.nelec,
+            options.occupation_mode,
+            options.fixed_occupations,
+            options.smearing_sigma,
+            options.degeneracy_tolerance
+        );
+
+        const Eigen::MatrixXcd orbitals =
+            ks.eigenvectors.leftCols(options.nbands);
+        const auto rho_out = build_density_from_orbitals(
+            basis,
+            fft,
+            orbitals,
+            occupations.occ,
+            volume
+        );
+
+        const auto VH_out = build_hartree_potential(lattice, fft, rho_out);
+        const auto exchange_out = build_lda_exchange(rho_out, dV);
+        const double nonlocal_energy = compute_nonlocal_energy(
+            projectors,
+            orbitals,
+            occupations.occ
+        );
+
+        const bool finite_temperature =
+            options.occupation_mode == OccupationMode::FermiDirac;
+        EnergyTerms energy = compute_total_energy(
+            basis,
+            orbitals,
+            occupations.occ,
+            rho_out,
+            ionic_potential,
+            VH_out,
+            exchange_out.Ex,
+            dV,
+            finite_temperature ? occupations.entropy : 0.0,
+            finite_temperature ? options.smearing_sigma : 0.0,
+            nonlocal_energy
+        );
+        energy.ion_smooth = ion_ion_energy;
+        energy.total_with_ion_smooth = energy.total + ion_ion_energy;
+
+        const double energy_for_convergence = finite_temperature
+            ? energy.free_energy
+            : energy.total;
+        const double dE = iter == 0
+            ? 0.0
+            : std::abs(energy_for_convergence - previous_energy);
+        const double drho = pulay_mix_density(
+            pulay,
+            rho,
+            rho_out,
+            dV,
+            options.nelec
+        );
+
+        result.iterations = iter + 1;
+        result.final_density_residual = drho;
+        result.final_energy_change = dE;
+        result.eigenvalues = ks.eigenvalues;
+        result.orbitals = orbitals;
+        result.occupations = occupations;
+        result.density = rho_out;
+        result.energy = energy;
+        result.electron_number_from_density =
+            electron_number_from_density(rho_out, dV);
+        result.variational_energy = energy_for_convergence + ion_ion_energy;
+
+        if (log_stream != nullptr) {
+            print_iteration(
+                *log_stream,
+                iter,
+                options,
+                result,
+                dE,
+                drho,
+                pulay.history_size()
+            );
+        }
+
+        if (iter > 0 &&
+            drho < options.density_tolerance &&
+            dE < options.energy_tolerance) {
+            result.converged = true;
+            if (log_stream != nullptr) {
+                *log_stream << "SCF converged.\n";
+            }
+            break;
+        }
+
+        previous_energy = energy_for_convergence;
+        C_guess = orbitals;
+    }
+
+    return result;
+}

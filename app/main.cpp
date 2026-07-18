@@ -95,7 +95,9 @@ int main(int argc, char** argv) {
               << "    ENCUT = " << ecut << " Ha\n"
               << "  NIONS  = " << ions.size()
               << "    EDIFF = " << options.energy_tolerance
-              << "    EDIFFRHO = " << options.density_tolerance << "\n";
+              << "    EDIFFRHO = " << options.density_tolerance << "\n"
+              << "  XC     = " << lda_functional_name(options.lda_functional)
+              << "    LibXC " << libxc_runtime_version() << "\n";
 
     const SCFResult scf = run_scf(
         lattice,

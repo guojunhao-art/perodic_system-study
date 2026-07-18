@@ -3,6 +3,13 @@
 #include <vector>
 
 /*
+ * Convert UPF's raw PP_RAB factors into complete Simpson quadrature weights.
+ * For an odd mesh, w_i = c_i PP_RAB_i / 3 with c = 1,4,2,...,4,1.
+ */
+std::vector<double> make_upf_simpson_weights(
+    const std::vector<double>& rab);
+
+/*
  * Spherical Bessel function j_l(x) for non-negative angular momentum l.
  * The implementation uses explicit small-x series to avoid cancellation.
  */

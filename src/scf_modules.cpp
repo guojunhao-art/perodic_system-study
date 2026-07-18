@@ -211,16 +211,16 @@ std::vector<double> build_toy_ionic_potential(
 std::vector<double> combine_effective_potential(
     const std::vector<double>& Vion,
     const std::vector<double>& VH,
-    const std::vector<double>& Vx) {
+    const std::vector<double>& Vxc) {
 
-    if (Vion.size() != VH.size() || Vion.size() != Vx.size()) {
+    if (Vion.size() != VH.size() || Vion.size() != Vxc.size()) {
         throw std::runtime_error("Potential size mismatch.");
     }
 
     std::vector<double> Veff(Vion.size(), 0.0);
 
     for (int p = 0; p < static_cast<int>(Veff.size()); ++p) {
-        Veff[p] = Vion[p] + VH[p] + Vx[p];
+        Veff[p] = Vion[p] + VH[p] + Vxc[p];
     }
 
     return Veff;
@@ -558,6 +558,7 @@ EnergyTerms compute_total_energy(
     const std::vector<double>& Vion,
     const std::vector<double>& VH,
     double Ex,
+    double Ec,
     double dV,
     double electronic_entropy,
     double sigma,
@@ -574,6 +575,7 @@ EnergyTerms compute_total_energy(
     }
 
     e.exchange = Ex;
+    e.correlation = Ec;
     e.nonlocal = nonlocal_energy;
 
     e.total =
@@ -581,6 +583,7 @@ EnergyTerms compute_total_energy(
         + e.external
         + e.hartree
         + e.exchange
+        + e.correlation
         + e.nonlocal;
 
     e.electronic_entropy = electronic_entropy;

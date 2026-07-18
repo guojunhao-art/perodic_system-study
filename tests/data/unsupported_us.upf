@@ -1,0 +1,8 @@
+<UPF version="2.0.1">
+  <PP_HEADER element="X" pseudo_type="US" relativistic="no"
+    is_ultrasoft="true" is_paw="false" has_so="false"
+    core_correction="false" functional="SLA PZ NOGX NOGC"
+    z_valence="1.0" wfc_cutoff="0.0" rho_cutoff="0.0"
+    l_max="0" l_local="0" mesh_size="3"
+    number_of_wfc="1" number_of_proj="1"/>
+</UPF>

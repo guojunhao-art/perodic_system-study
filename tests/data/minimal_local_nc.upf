@@ -1,0 +1,17 @@
+<UPF version="2.0.1">
+  <PP_HEADER element="H " pseudo_type="NC" relativistic="no"
+    is_ultrasoft="false" is_paw="false" has_so="false"
+    core_correction="false" functional="SLA PZ NOGX NOGC"
+    z_valence="1.0D0" wfc_cutoff="0.0" rho_cutoff="0.0"
+    l_max="-1" l_local="0" mesh_size="3"
+    number_of_wfc="1" number_of_proj="0"/>
+  <PP_MESH dx="0.5" mesh="3" xmin="-2.0" rmax="1.0" zmesh="1.0">
+    <PP_R>0.1 0.2 0.4</PP_R>
+    <PP_RAB>0.05 0.10 0.20</PP_RAB>
+  </PP_MESH>
+  <PP_LOCAL>-2.0 -1.0 -0.5</PP_LOCAL>
+  <PP_NONLOCAL>
+    <!-- Mirrors a harmless artifact found in a converted zero-projector file. -->
+    <PP_DIJ>6.9e-310</PP_DIJ>
+  </PP_NONLOCAL>
+</UPF>

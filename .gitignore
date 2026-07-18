@@ -1,0 +1,8 @@
+/build/
+/fft
+/upf_info
+/test_*
+*.o
+
+# Download official pseudopotentials locally; do not vendor them by accident.
+/pseudopotentials/

@@ -39,6 +39,7 @@ add_library(pw_dft_core
     src/radial_transform.cpp
     src/upf_reader.cpp
     src/upf_local_potential.cpp
+    src/upf_nonlocal.cpp
     src/xc_functional.cpp
 )
 
@@ -95,6 +96,14 @@ add_test(NAME libxc_lda COMMAND test_xc_functional)
 add_executable(test_upf_local_potential tests/test_upf_local_potential.cpp)
 target_link_libraries(test_upf_local_potential PRIVATE pw_dft_core)
 add_test(NAME nc_upf_local_potential COMMAND test_upf_local_potential)
+
+add_executable(test_upf_nonlocal tests/test_upf_nonlocal.cpp)
+target_link_libraries(test_upf_nonlocal PRIVATE pw_dft_core)
+target_compile_definitions(
+    test_upf_nonlocal
+    PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+)
+add_test(NAME nc_upf_nonlocal COMMAND test_upf_nonlocal)
 
 add_executable(test_ewald tests/test_ewald.cpp)
 target_link_libraries(test_ewald PRIVATE pw_dft_core)

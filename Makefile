@@ -30,6 +30,9 @@ test_xc_functional: $(CORE_SRC) tests/test_xc_functional.cpp
 test_upf_local_potential: $(CORE_SRC) tests/test_upf_local_potential.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
+test_upf_nonlocal: $(CORE_SRC) tests/test_upf_nonlocal.cpp
+	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) -DTEST_DATA_DIR=\"tests/data\" $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+
 test_ewald: $(CORE_SRC) tests/test_ewald.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
@@ -45,14 +48,15 @@ upf_info: src/upf_reader.cpp src/radial_transform.cpp src/upf_local_potential.cp
 h2_opt: $(CORE_SRC) app/h2_opt.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
-test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_xc_functional test_upf_local_potential test_ewald
+test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald
 	./test_forces
 	./test_scf_force_fd
 	./test_radial_transform
 	./test_upf_reader
 	./test_xc_functional
 	./test_upf_local_potential
+	./test_upf_nonlocal
 	./test_ewald
 
 clean:
-	rm -f fft upf_info h2_opt test_forces test_scf_force_fd test_radial_transform test_upf_reader test_xc_functional test_upf_local_potential test_ewald
+	rm -f fft upf_info h2_opt test_forces test_scf_force_fd test_radial_transform test_upf_reader test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald

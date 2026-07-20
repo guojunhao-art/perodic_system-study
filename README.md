@@ -12,8 +12,9 @@ Hartree 原子单位。代码保留了许多生产级程序会封装起来的中
 - fixed、简并感知零温和 Fermi–Dirac 占据；
 - 线性/自适应辅助函数和 Pulay density mixing；
 - Gaussian 平滑局域赝势、短程修正和离子–离子能；
-- $s$-like、$p$-like Gaussian 非局域 projector；
-- 总能量、非局域能和三部分解析离子力；
+- 保留用于解析回归测试的 $s$-like、$p$-like Gaussian projector；
+- 真实 NC-UPF `PP_BETA.* + PP_DIJ` 非局域算符、能量和解析力；
+- 总能量和局域、point-ion Ewald、非局域三部分解析离子力；
 - 径向 Fourier–Bessel 变换；
 - 严格 NC-UPF v2 reader；
 - `PP_LOCAL` 的 Gaussian-screened Fourier–Bessel 变换、周期势和解析局域力；
@@ -21,10 +22,9 @@ Hartree 原子单位。代码保留了许多生产级程序会封装起来的中
 - 无 projector H UPF 的 H₂ 一维键长优化驱动；
 - `upf_info` 文件及局域势检查工具。
 
-> 当前代码已经能从真实 NC-UPF 构造局域势，但默认的 `fft` 示例仍使用原来的
-> toy Gaussian 赝势；`PP_BETA.*` 和 `PP_DIJ` 也尚未接入 Hamiltonian。
-> 因此，无 projector 的 H UPF 已经可以完成 H₂ SCF 和一维键长优化；Si 等有
-> projector 的赝势还不能做完整 SCF。
+默认的 `fft` 驱动已经不再构造 toy potential，而是直接从一个 NC-UPF 文件读取
+局域势、projector、$D_{ij}$、价电子数和离子电荷。旧 Gaussian potential API
+暂时只保留给已有的解析单元测试使用。
 
 ## 1. 构建与运行
 
@@ -40,7 +40,7 @@ sudo apt install g++ make cmake pkg-config libeigen3-dev libfftw3-dev libxc-dev
 
 ```bash
 make -j
-./fft
+./fft pseudopotentials/Si.pz-vbc.UPF 10.0 12.0 36 0.05
 make test
 ```
 
@@ -79,6 +79,18 @@ make upf_info
 `upf_info` 会打印实际读取到的元素、泛函、径向网格、projector 的 $l$ 和
 `PP_DIJ`，并同时显示 Ry 与 Ha 单位的矩阵。给出第二个参数时，它还会用指定的
 Gaussian 宽度（Bohr）构造局域势，打印短程尾部和若干 $G$ 点的径向变换。
+
+主 SCF 驱动的命令行是
+
+```bash
+./fft PSEUDO.UPF [ECUT_HA] [CELL_BOHR] [FFT_N] [SMEARING_EV]
+```
+
+第一个参数现在是必需的；代码不再从命令行接收 toy Gaussian 势参数。只给 UPF
+时，优先采用文件中的 `wfc_cutoff`（从 Ry 换算为 Ha）；旧赝势若没有有效的建议值，
+默认使用 10 Ha。当前驱动仍是“立方晶胞中心放一个原子”的高对称验证程序，还不是
+通用结构文件解析器。驱动当前固定使用 LibXC PZ-LDA，因此会主动拒绝泛函标签中
+不含 `PZ` 的赝势，避免电子泛函与生成赝势所用泛函静默混用。
 
 ### 1.2 H₂ 局域 UPF 键长优化
 
@@ -564,13 +576,15 @@ SCF，得到如下收敛趋势：
 | 10 | 12 | $36^3$ | 0.7887 |
 
 在 12 Bohr、10 Ha 点，解析键向力与中心有限差分相差约
-$1.5\times10^{-7}$ Ha/Bohr，说明能量和力实现彼此一致。
+$1.5\times10^{-7}$ Ha/Bohr，说明能量和力实现彼此一致。相同 UPF、晶胞、截断能
+和 PZ-LDA 设置下，Quantum ESPRESSO 给出
+$R_{\mathrm{H-H}}=1.4904091638$ Bohr，本程序给出 $1.49041165$ Bohr，差值约
+$2.5\times10^{-6}$ Bohr；总能量分别为 $-1.1117005731$ Ha 和
+$-1.1117006841$ Ha，差值约 $1.1\times10^{-7}$ Ha。
 [NIST CCCBDB 给出的实验平衡键长](https://cccbdb.nist.gov/exp2x.asp?casno=1333740)
 约为 $0.7414$ Å；当前模型结果仍偏长。因此现阶段只能断言“代码内部的能量–力一致”，
-还不能断言“赝势结果已经复现实验”。下一项必要验证是用同一个
-`H.pz-vbc.UPF` 和相同数值参数运行 Quantum ESPRESSO：若 QE 给出相近结果，
-差异主要来自 LDA/赝势和有限尺寸；若 QE 明显更接近实验，则还应继续检查本代码
-的 Fourier、$G=0$ 或总能量约定。
+以及“复现了同设置的 QE 结果”，不能断言“赝势结果已经复现实验”。这里偏长主要是
+所选 LDA/赝势和有限周期晶胞的物理近似，不是当前能量–力导数不一致造成的。
 
 ## 9. 非局域赝势
 
@@ -613,6 +627,65 @@ $$
 
 所以真实 UPF projector 不能沿用 toy Gaussian 代码中“逐个归一化 beta、D 不变”
 的做法。reader 原样保存 beta 和 $D$，不做隐藏归一化。
+
+### 9.1 实球谐展开
+
+对第 $i$ 个径向 projector 及其角动量 $l_i$，代码生成 $2l_i+1$ 个磁量子数
+通道：
+
+$$
+B_{I,i,lm}(\mathbf G)
+=\langle\mathbf G|\beta^I_{i,lm}\rangle
+=\frac{(-i)^l}{\sqrt\Omega}
+Y_{lm}^{\mathrm{real}}(\widehat{\mathbf G})
+\widetilde\beta_{i,l}(G)
+e^{-i\mathbf G\cdot\mathbf R_I}.
+$$
+
+这里 $\widetilde\beta$ 已经由径向函数中的 $4\pi$ Fourier–Bessel 变换得到，
+所以式子外面不再重复乘 $4\pi$。实球谐采用 Quantum ESPRESSO 的顺序
+
+$$
+m=0,\ \cos\phi,\ \sin\phi,\ \cos2\phi,\ \sin2\phi,\ldots
+$$
+
+并包含 Condon–Shortley 相位。例如 $l=1$ 三个通道依次正比于
+$z/r,-x/r,-y/r$。测试同时检查
+
+$$
+\sum_{m=1}^{2l+1}\left[Y_{lm}^{\mathrm{real}}(\widehat{\mathbf G})\right]^2
+=\frac{2l+1}{4\pi}.
+$$
+
+### 9.2 稠密 $D_{ij}$ 如何接入现有标量通道
+
+标量、无自旋轨道 NC-UPF 中，$D$ 只在相同 $l$、相同实球谐通道之间耦合。
+对每个 $l$ 的径向块作实对称本征分解
+
+$$
+D^{(l)}=U^{(l)}\Lambda^{(l)}U^{(l)T},
+$$
+
+并定义新 projector
+
+$$
+|\widetilde\beta_{\alpha lm}\rangle
+=\sum_i U^{(l)}_{i\alpha}|\beta_{ilm}\rangle.
+$$
+
+于是
+
+$$
+\sum_{ij}|\beta_{ilm}\rangle D_{ij}^{(l)}
+\langle\beta_{jlm}|
+=\sum_\alpha|\widetilde\beta_{\alpha lm}\rangle
+\lambda_\alpha^{(l)}
+\langle\widetilde\beta_{\alpha lm}|.
+$$
+
+右边正好是原有 Hψ、$E_{\mathrm{NL}}$ 和 $F_{\mathrm{NL}}$ 接口所需的“一个
+projector 配一个标量 $D$”形式。这不是忽略非对角元，而是对原算符的精确基变换。
+代码会拒绝非零的跨 $l$ 耦合，而不是静默套用错误的简并展开。
 
 ## 10. Hellmann–Feynman 离子力
 
@@ -694,6 +767,18 @@ $$
 \sum_I\mathbf F_I\approx\mathbf0.
 $$
 
+实现中先把每个 $D^{(l)}$ 块变成上一节的本征 projector。对其中一个标量通道
+$\alpha$，有
+
+$$
+\frac{\partial B_{I,\alpha lm}(\mathbf G)}{\partial R_{I,a}}
+=-iG_aB_{I,\alpha lm}(\mathbf G),
+$$
+
+所以现有标量通道解析力逐项求和就与原稠密 $D_{ij}$ 公式完全等价。
+`test_upf_nonlocal` 直接比较“原始稠密 $D$ 算符”和“对角化后的标量通道算符”，
+并在固定轨道上对非对称离子位置做三方向中心有限差分。
+
 ## 11. NC-UPF reader 的支持边界
 
 第一版 reader 主动接受：
@@ -720,7 +805,8 @@ UPF 格式和字段定义参考
 
 ## 12. 下一步路线
 
-1. 用相同 H₂ 输入与 Quantum ESPRESSO 交叉验证局域 UPF 的能量和键长；
-2. 从 `PP_BETA.*` 构造带球谐简并度的倒空间 projector；
-3. 用完整 $D_{ij}$ 重构 $H\psi$、$E_{\mathrm{NL}}$ 和非局域力；
-4. 把含 projector 的真实 UPF 接入 SCF，并做原子、二原子参考计算。
+1. 用 `Si.pz-vbc.UPF` 对单原子的本征值、$E_{\mathrm{NL}}$ 和高对称零力与
+   Quantum ESPRESSO 做数值交叉验证；
+2. 给主程序增加晶格、元素表和多离子坐标输入，替代当前单原子验证构型；
+3. 对含真实非局域 projector 的双原子非对称构型做全 SCF 总力有限差分；
+4. 在能量、力和输入模型都稳定后实现通用几何优化器。

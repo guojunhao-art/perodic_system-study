@@ -27,21 +27,25 @@ test_scf_force_fd: $(CORE_SRC) tests/test_scf_force_fd.cpp
 test_xc_functional: $(CORE_SRC) tests/test_xc_functional.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
+test_upf_local_potential: $(CORE_SRC) tests/test_upf_local_potential.cpp
+	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+
 test_radial_transform: src/radial_transform.cpp tests/test_radial_transform.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@
 
 test_upf_reader: src/upf_reader.cpp tests/test_upf_reader.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -DTEST_DATA_DIR=\"tests/data\" $^ -o $@
 
-upf_info: src/upf_reader.cpp app/upf_info.cpp
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@
+upf_info: src/upf_reader.cpp src/radial_transform.cpp src/upf_local_potential.cpp app/upf_info.cpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
-test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_xc_functional
+test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_xc_functional test_upf_local_potential
 	./test_forces
 	./test_scf_force_fd
 	./test_radial_transform
 	./test_upf_reader
 	./test_xc_functional
+	./test_upf_local_potential
 
 clean:
-	rm -f fft upf_info test_forces test_scf_force_fd test_radial_transform test_upf_reader test_xc_functional
+	rm -f fft upf_info test_forces test_scf_force_fd test_radial_transform test_upf_reader test_xc_functional test_upf_local_potential

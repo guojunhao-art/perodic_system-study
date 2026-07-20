@@ -110,6 +110,70 @@ std::vector<Eigen::Vector3d> compute_local_ionic_forces(
     return forces;
 }
 
+std::vector<Eigen::Vector3d> compute_upf_local_ionic_forces(
+    const Lattice& lattice,
+    const FFTGrid& grid,
+    const std::vector<UPFLocalSpecies>& species,
+    const std::vector<UPFLocalIon>& ions,
+    const std::vector<std::complex<double>>& n_G) {
+
+    if (static_cast<int>(n_G.size()) != grid.ngrid) {
+        throw std::runtime_error("n_G size mismatch in UPF local ionic force.");
+    }
+    for (const UPFLocalIon& ion : ions) {
+        if (ion.species_index < 0 ||
+            ion.species_index >= static_cast<int>(species.size())) {
+            throw std::runtime_error(
+                "UPF local ion has an invalid species index."
+            );
+        }
+    }
+
+    const double volume = lattice.volume();
+    auto forces = zero_forces(static_cast<int>(ions.size()));
+    const std::complex<double> imag_unit(0.0, 1.0);
+    std::vector<double> kernels(species.size(), 0.0);
+
+    for (int i = 0; i < grid.n1; ++i) {
+        for (int j = 0; j < grid.n2; ++j) {
+            for (int k = 0; k < grid.n3; ++k) {
+                const int p = grid.index(i, j, k);
+                const Eigen::Vector3i n =
+                    grid.freq_from_indices(i, j, k);
+                const Eigen::Vector3d G =
+                    lattice.gvector_from_freq(n);
+
+                for (int ispecies = 0;
+                     ispecies < static_cast<int>(species.size());
+                     ++ispecies) {
+                    kernels[ispecies] =
+                        upf_local_kernel_G(species[ispecies], G.norm());
+                }
+
+                for (int iion = 0;
+                     iion < static_cast<int>(ions.size());
+                     ++iion) {
+                    const UPFLocalIon& ion = ions[iion];
+                    const Eigen::Vector3d R =
+                        lattice.cart_from_frac(ion.frac_position);
+                    const std::complex<double> V_I_G =
+                        kernels[ion.species_index]
+                        * phase_factor(G, R)
+                        / volume;
+                    const std::complex<double> common =
+                        volume * imag_unit * std::conj(n_G[p]) * V_I_G;
+
+                    for (int a = 0; a < 3; ++a) {
+                        forces[iion][a] += G[a] * common.real();
+                    }
+                }
+            }
+        }
+    }
+
+    return forces;
+}
+
 std::vector<Eigen::Vector3d> compute_smooth_ion_ion_forces(
     const Lattice& lattice,
     const FFTGrid& grid,

@@ -37,6 +37,7 @@ add_library(pw_dft_core
     src/forces.cpp
     src/radial_transform.cpp
     src/upf_reader.cpp
+    src/upf_local_potential.cpp
     src/xc_functional.cpp
 )
 
@@ -86,3 +87,7 @@ add_test(NAME nc_upf_reader COMMAND test_upf_reader)
 add_executable(test_xc_functional tests/test_xc_functional.cpp)
 target_link_libraries(test_xc_functional PRIVATE pw_dft_core)
 add_test(NAME libxc_lda COMMAND test_xc_functional)
+
+add_executable(test_upf_local_potential tests/test_upf_local_potential.cpp)
+target_link_libraries(test_upf_local_potential PRIVATE pw_dft_core)
+add_test(NAME nc_upf_local_potential COMMAND test_upf_local_potential)

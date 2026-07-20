@@ -230,11 +230,16 @@ std::vector<double> build_upf_local_potential_real(
     const std::vector<UPFLocalSpecies>& species,
     const std::vector<UPFLocalIon>& ions) {
 
-    fft.reciprocal_grid = build_upf_local_potential_G(
+    const auto potential_G = build_upf_local_potential_G(
         lattice,
         fft.grid,
         species,
         ions
+    );
+    std::copy(
+        potential_G.begin(),
+        potential_G.end(),
+        fft.reciprocal_grid.begin()
     );
     fftw_execute(fft.backward_plan);
 

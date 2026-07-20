@@ -1,6 +1,7 @@
 /build/
 /fft
 /upf_info
+/h2_opt
 /test_*
 *.o
 

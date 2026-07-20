@@ -17,12 +17,14 @@ Hartree 原子单位。代码保留了许多生产级程序会封装起来的中
 - 径向 Fourier–Bessel 变换；
 - 严格 NC-UPF v2 reader；
 - `PP_LOCAL` 的 Gaussian-screened Fourier–Bessel 变换、周期势和解析局域力；
+- Gaussian-split point-ion Ewald 能量和解析力；
+- 无 projector H UPF 的 H₂ 一维键长优化驱动；
 - `upf_info` 文件及局域势检查工具。
 
 > 当前代码已经能从真实 NC-UPF 构造局域势，但默认的 `fft` 示例仍使用原来的
 > toy Gaussian 赝势；`PP_BETA.*` 和 `PP_DIJ` 也尚未接入 Hamiltonian。
-> 因此，无 projector 的 H UPF 已具备局域部分，Si 等有 projector 的赝势还不能
-> 用来做完整 SCF。
+> 因此，无 projector 的 H UPF 已经可以完成 H₂ SCF 和一维键长优化；Si 等有
+> projector 的赝势还不能做完整 SCF。
 
 ## 1. 构建与运行
 
@@ -77,6 +79,31 @@ make upf_info
 `upf_info` 会打印实际读取到的元素、泛函、径向网格、projector 的 $l$ 和
 `PP_DIJ`，并同时显示 Ry 与 Ha 单位的矩阵。给出第二个参数时，它还会用指定的
 Gaussian 宽度（Bohr）构造局域势，打印短程尾部和若干 $G$ 点的径向变换。
+
+### 1.2 H₂ 局域 UPF 键长优化
+
+`H.pz-vbc.UPF` 没有非局域 projector，因此可以在实现 `PP_BETA` 前作为真实
+局域赝势的端到端测试：
+
+```bash
+make h2_opt
+./h2_opt pseudopotentials/H.pz-vbc.UPF
+
+# 显式指定 cutoff、晶胞边长和 FFT 网格
+./h2_opt pseudopotentials/H.pz-vbc.UPF 10.0 12.0 36
+```
+
+程序固定 H₂ 质心，只优化一个 H–H 距离。每个几何点都会重新收敛 SCF，随后用
+解析局域力与 point-ion Ewald 力构造键向力；最终点还会做一次中心有限差分。
+这还不是通用三维几何优化器。
+
+为了和 Quantum ESPRESSO 使用相同 UPF、晶胞和 cutoff 交叉验证，可以运行
+[`examples/h2_qe.in`](examples/h2_qe.in)：
+
+```bash
+mkdir -p tmp
+pw.x -in examples/h2_qe.in > h2_qe.out
+```
 
 ## 2. 单位和 Fourier 约定
 
@@ -342,7 +369,7 @@ V_{I,\mathrm{short}}(\mathbf G)
 e^{-r_{c,I}^2G^2/2}e^{-i\mathbf G\cdot\mathbf R_I}.
 $$
 
-代码当前使用的平滑离子 Coulomb 能是
+原始 toy 模型使用的平滑离子 Coulomb 能是
 
 $$
 E_{\mathrm{II}}^{\mathrm{smooth}}
@@ -352,6 +379,23 @@ $$
 
 其中包含与离子位置无关的 Gaussian self contribution；它不影响力，但在与
 其他程序比较绝对总能量时必须统一处理。
+
+真实赝势的离子核应当使用点电荷 Ewald 排斥，不能直接用上述平滑能量做几何
+优化。取所有离子共用的辅助 Gaussian 宽度 $\sigma$，point-ion Ewald 能写成
+
+$$
+E_{\mathrm{II}}^{\mathrm{point}}
+=E_{\mathrm{II}}^{\mathrm{smooth}}
++\frac12\sum_{IJ\mathbf L}'
+\frac{Z_IZ_J}{r_{IJ\mathbf L}}
+\operatorname{erfc}\left(\frac{r_{IJ\mathbf L}}{2\sigma}\right)
+-\sum_I\frac{Z_I^2}{2\sqrt\pi\sigma}
+-\frac{2\pi\sigma^2}{\Omega}\left(\sum_I Z_I\right)^2.
+$$
+
+四项依次是 Gaussian 电荷的倒空间能、point-minus-Gaussian 实空间修正、
+Gaussian self energy 和离子子系统的均匀中和背景项。各项分别依赖 $\sigma$，
+总和不依赖。`test_ewald` 同时检查宽度不变量、总力为零和解析力有限差分。
 
 ## 8. UPF 径向数据和 Fourier–Bessel 变换
 
@@ -505,6 +549,29 @@ $$
 离子–离子能、Gaussian self energy 及其他程序的零点约定一起比较；力不受
 常数 $G=0$ 项影响，因为其位置导数含有 $\mathbf G=0$。
 
+### 8.2 H₂ 端到端结果
+
+使用 `H.pz-vbc.UPF`、LibXC `LDA_X + LDA_C_PZ` 和每个几何点完全重新收敛的
+SCF，得到如下收敛趋势：
+
+| $E_{\mathrm{cut}}$ (Ha) | cell (Bohr) | FFT | 优化 H–H (Å) |
+|---:|---:|---:|---:|
+| 2 | 10 | $24^3$ | 0.9727 |
+| 4 | 10 | $28^3$ | 0.8386 |
+| 6 | 10 | $32^3$ | 0.7984 |
+| 6 | 12 | $32^3$ | 0.7963 |
+| 10 | 10 | $32^3$ | 0.7947 |
+| 10 | 12 | $36^3$ | 0.7887 |
+
+在 12 Bohr、10 Ha 点，解析键向力与中心有限差分相差约
+$1.5\times10^{-7}$ Ha/Bohr，说明能量和力实现彼此一致。
+[NIST CCCBDB 给出的实验平衡键长](https://cccbdb.nist.gov/exp2x.asp?casno=1333740)
+约为 $0.7414$ Å；当前模型结果仍偏长。因此现阶段只能断言“代码内部的能量–力一致”，
+还不能断言“赝势结果已经复现实验”。下一项必要验证是用同一个
+`H.pz-vbc.UPF` 和相同数值参数运行 Quantum ESPRESSO：若 QE 给出相近结果，
+差异主要来自 LDA/赝势和有限尺寸；若 QE 明显更接近实验，则还应继续检查本代码
+的 Fourier、$G=0$ 或总能量约定。
+
 ## 9. 非局域赝势
 
 Kleinman–Bylander 形式写作
@@ -653,7 +720,7 @@ UPF 格式和字段定义参考
 
 ## 12. 下一步路线
 
-1. 从 `PP_BETA.*` 构造带球谐简并度的倒空间 projector；
-2. 用完整 $D_{ij}$ 重构 $H\psi$、$E_{\mathrm{NL}}$ 和非局域力；
-3. 把真实 UPF 的局域与非局域部分接入 SCF 输入模型；
-4. 用原子、二原子和 Quantum ESPRESSO 参考计算逐层验证。
+1. 用相同 H₂ 输入与 Quantum ESPRESSO 交叉验证局域 UPF 的能量和键长；
+2. 从 `PP_BETA.*` 构造带球谐简并度的倒空间 projector；
+3. 用完整 $D_{ij}$ 重构 $H\psi$、$E_{\mathrm{NL}}$ 和非局域力；
+4. 把含 projector 的真实 UPF 接入 SCF，并做原子、二原子参考计算。

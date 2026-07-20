@@ -33,6 +33,7 @@ add_library(pw_dft_core
     src/scf.cpp
     src/eigensolver.cpp
     src/mixing.cpp
+    src/ewald.cpp
     src/potentials.cpp
     src/forces.cpp
     src/radial_transform.cpp
@@ -63,6 +64,9 @@ target_link_libraries(fft PRIVATE pw_dft_core)
 add_executable(upf_info app/upf_info.cpp)
 target_link_libraries(upf_info PRIVATE pw_dft_core)
 
+add_executable(h2_opt app/h2_opt.cpp)
+target_link_libraries(h2_opt PRIVATE pw_dft_core)
+
 enable_testing()
 add_executable(test_forces tests/test_forces.cpp)
 target_link_libraries(test_forces PRIVATE pw_dft_core)
@@ -91,3 +95,7 @@ add_test(NAME libxc_lda COMMAND test_xc_functional)
 add_executable(test_upf_local_potential tests/test_upf_local_potential.cpp)
 target_link_libraries(test_upf_local_potential PRIVATE pw_dft_core)
 add_test(NAME nc_upf_local_potential COMMAND test_upf_local_potential)
+
+add_executable(test_ewald tests/test_ewald.cpp)
+target_link_libraries(test_ewald PRIVATE pw_dft_core)
+add_test(NAME point_ion_ewald COMMAND test_ewald)

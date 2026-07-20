@@ -1,0 +1,39 @@
+&CONTROL
+  calculation = 'relax'
+  prefix = 'h2'
+  pseudo_dir = './pseudopotentials'
+  outdir = './tmp'
+  tprnfor = .true.
+  forc_conv_thr = 1.0d-5
+/
+&SYSTEM
+  ibrav = 0
+  nat = 2
+  ntyp = 1
+  ecutwfc = 20.0
+  ecutrho = 80.0
+  occupations = 'fixed'
+  input_dft = 'pz'
+  nosym = .true.
+/
+&ELECTRONS
+  conv_thr = 1.0d-10
+  mixing_beta = 0.30
+/
+&IONS
+  ion_dynamics = 'bfgs'
+/
+
+ATOMIC_SPECIES
+H  1.00794  H.pz-vbc.UPF
+
+CELL_PARAMETERS bohr
+12.0  0.0   0.0
+0.0  12.0   0.0
+0.0   0.0  12.0
+
+ATOMIC_POSITIONS bohr
+H  5.30  6.00  6.00
+H  6.70  6.00  6.00
+
+K_POINTS gamma

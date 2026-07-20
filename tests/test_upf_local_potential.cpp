@@ -212,6 +212,38 @@ void test_periodic_coefficients_and_local_force() {
         "periodic local Hermitian-symmetry error"
     );
 
+    FFTWorkspace fft(grid);
+    const auto potential_real = build_upf_local_potential_real(
+        lattice,
+        fft,
+        species,
+        ions
+    );
+    const int real_index = grid.index(2, 3, 1);
+    const Eigen::Vector3d real_fractional =
+        grid.frac_coord(2, 3, 1);
+    std::complex<double> direct_sum(0.0, 0.0);
+    for (int i = 0; i < grid.n1; ++i) {
+        for (int j = 0; j < grid.n2; ++j) {
+            for (int k = 0; k < grid.n3; ++k) {
+                const int p = grid.index(i, j, k);
+                const Eigen::Vector3i n =
+                    grid.freq_from_indices(i, j, k);
+                const double phase =
+                    2.0 * M_PI * n.cast<double>().dot(real_fractional);
+                direct_sum += potential_G[p] * std::complex<double>(
+                    std::cos(phase),
+                    std::sin(phase)
+                );
+            }
+        }
+    }
+    require_less(
+        std::abs(potential_real[real_index] - direct_sum.real()),
+        2.0e-12,
+        "UPF local inverse-FFT error"
+    );
+
     std::vector<std::complex<double>> density_G(
         grid.ngrid,
         std::complex<double>(0.0, 0.0)

@@ -91,6 +91,30 @@ double transform_impl(
 
 } // namespace
 
+std::vector<double> make_upf_simpson_weights(
+    const std::vector<double>& rab) {
+
+    if (rab.size() < 3 || rab.size() % 2 == 0) {
+        throw std::runtime_error(
+            "UPF Simpson quadrature requires an odd mesh with at least 3 points."
+        );
+    }
+
+    std::vector<double> weights(rab.size(), 0.0);
+    for (int i = 0; i < static_cast<int>(rab.size()); ++i) {
+        if (!std::isfinite(rab[i]) || rab[i] <= 0.0) {
+            throw std::runtime_error(
+                "UPF PP_RAB factors must be positive and finite."
+            );
+        }
+        const double simpson_factor = (i == 0 || i + 1 == static_cast<int>(rab.size()))
+            ? 1.0
+            : (i % 2 == 0 ? 2.0 : 4.0);
+        weights[i] = simpson_factor * rab[i] / 3.0;
+    }
+    return weights;
+}
+
 double spherical_bessel_j(int l, double x) {
     if (l < 0) {
         throw std::runtime_error("Angular momentum l cannot be negative.");

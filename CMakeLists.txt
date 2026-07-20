@@ -5,6 +5,27 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Eigen3 QUIET)
+find_package(PkgConfig QUIET)
+
+if (PkgConfig_FOUND)
+    pkg_check_modules(LIBXC QUIET IMPORTED_TARGET libxc)
+endif()
+
+if (NOT TARGET PkgConfig::LIBXC)
+    find_path(LIBXC_INCLUDE_DIR NAMES xc.h)
+    find_library(LIBXC_LIBRARY NAMES xc)
+    if (NOT LIBXC_INCLUDE_DIR OR NOT LIBXC_LIBRARY)
+        message(FATAL_ERROR
+            "LibXC was not found. Install its development package "
+            "(for example libxc-dev) or set LIBXC_INCLUDE_DIR and LIBXC_LIBRARY."
+        )
+    endif()
+    add_library(LibXC::LibXC UNKNOWN IMPORTED)
+    set_target_properties(LibXC::LibXC PROPERTIES
+        IMPORTED_LOCATION "${LIBXC_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${LIBXC_INCLUDE_DIR}"
+    )
+endif()
 
 add_library(pw_dft_core
     src/hamiltonian.cpp
@@ -16,6 +37,7 @@ add_library(pw_dft_core
     src/forces.cpp
     src/radial_transform.cpp
     src/upf_reader.cpp
+    src/xc_functional.cpp
 )
 
 target_include_directories(pw_dft_core PUBLIC include)
@@ -27,6 +49,12 @@ else()
 endif()
 
 target_link_libraries(pw_dft_core PUBLIC fftw3 m)
+
+if (TARGET PkgConfig::LIBXC)
+    target_link_libraries(pw_dft_core PUBLIC PkgConfig::LIBXC)
+else()
+    target_link_libraries(pw_dft_core PUBLIC LibXC::LibXC)
+endif()
 
 add_executable(fft app/main.cpp)
 target_link_libraries(fft PRIVATE pw_dft_core)
@@ -54,3 +82,7 @@ target_compile_definitions(
     PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
 )
 add_test(NAME nc_upf_reader COMMAND test_upf_reader)
+
+add_executable(test_xc_functional tests/test_xc_functional.cpp)
+target_link_libraries(test_xc_functional PRIVATE pw_dft_core)
+add_test(NAME libxc_lda COMMAND test_xc_functional)

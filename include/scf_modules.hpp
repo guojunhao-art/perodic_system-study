@@ -28,6 +28,7 @@ struct EnergyTerms {
     double external = 0.0;
     double hartree = 0.0;
     double exchange = 0.0;
+    double correlation = 0.0;
     double total = 0.0;
     double electronic_entropy = 0.0;
     double entropy_correction = 0.0;
@@ -65,7 +66,7 @@ std::vector<double> build_toy_ionic_potential(
 std::vector<double> combine_effective_potential(
     const std::vector<double>& Vion,
     const std::vector<double>& VH,
-    const std::vector<double>& Vx);
+    const std::vector<double>& Vxc);
 
 double sum_occupations(const std::vector<double>& occ);
 
@@ -108,6 +109,7 @@ EnergyTerms compute_total_energy(
     const std::vector<double>& Vion,
     const std::vector<double>& VH,
     double Ex,
+    double Ec,
     double dV,
     double electronic_entropy = 0.0,
     double sigma = 0.0,

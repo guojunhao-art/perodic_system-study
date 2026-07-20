@@ -2,6 +2,7 @@
 
 #include "core.hpp"
 #include "scf_modules.hpp"
+#include "xc_functional.hpp"
 
 #include <Eigen/Dense>
 
@@ -21,6 +22,8 @@ enum class SCFVerbosity {
 struct SCFOptions {
     double nelec = 2.0;
     int nbands = 10;
+
+    LDAFunctional lda_functional = LDAFunctional::PerdewZunger;
 
     OccupationMode occupation_mode = OccupationMode::FermiDirac;
     std::vector<double> fixed_occupations;

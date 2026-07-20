@@ -213,6 +213,7 @@ SCFResult run_scf(
 
     const std::vector<NonlocalProjector>* projector_ptr =
         projectors.empty() ? nullptr : &projectors;
+    LibXCLDAFunctional xc(options.lda_functional);
 
     SCFResult result;
     double previous_energy = 0.0;
@@ -226,11 +227,11 @@ SCFResult run_scf(
 
     for (int iter = 0; iter < options.max_iterations; ++iter) {
         const auto VH = build_hartree_potential(lattice, fft, rho);
-        const auto exchange = build_lda_exchange(rho, dV);
+        const auto xc_input = xc.evaluate(rho, dV);
         const auto Veff = combine_effective_potential(
             ionic_potential,
             VH,
-            exchange.Vx
+            xc_input.Vxc
         );
 
         const DavidsonResult ks = davidson_lowest_eigenstates(
@@ -270,7 +271,7 @@ SCFResult run_scf(
         );
 
         const auto VH_out = build_hartree_potential(lattice, fft, rho_out);
-        const auto exchange_out = build_lda_exchange(rho_out, dV);
+        const auto xc_output = xc.evaluate(rho_out, dV);
         const double nonlocal_energy = compute_nonlocal_energy(
             projectors,
             orbitals,
@@ -286,7 +287,8 @@ SCFResult run_scf(
             rho_out,
             ionic_potential,
             VH_out,
-            exchange_out.Ex,
+            xc_output.exchange_energy,
+            xc_output.correlation_energy,
             dV,
             finite_temperature ? occupations.entropy : 0.0,
             finite_temperature ? options.smearing_sigma : 0.0,

@@ -8,7 +8,7 @@ Hartree 原子单位。代码保留了许多生产级程序会封装起来的中
 当前实现包括：
 
 - Gamma-point 平面波基组和 FFT-based \(H\psi\)；
-- LDA exchange-only SCF；
+- LibXC 非自旋极化 LDA exchange + Perdew–Zunger correlation SCF；
 - fixed、简并感知零温和 Fermi–Dirac 占据；
 - 线性/自适应辅助函数和 Pulay density mixing；
 - Gaussian 平滑局域赝势、短程修正和离子–离子能；
@@ -23,7 +23,13 @@ Hartree 原子单位。代码保留了许多生产级程序会封装起来的中
 
 ## 1. 构建与运行
 
-依赖：C++17、Eigen3 和 FFTW3。
+依赖：C++17、Eigen3、FFTW3 和 LibXC（已用 7.0.0 验证）。例如在
+Ubuntu/Debian 上安装开发包：
+
+```bash
+sudo apt update
+sudo apt install g++ make cmake pkg-config libeigen3-dev libfftw3-dev libxc-dev
+```
 
 使用 Makefile：
 
@@ -159,7 +165,7 @@ n(\mathbf r)=\sum_n f_n|\psi_n(\mathbf r)|^2,
 \int_\Omega n(\mathbf r)\,d\mathbf r=N_e.
 \]
 
-## 4. Hartree、交换和未来的 LibXC 接口
+## 4. Hartree 与 LibXC 交换-关联接口
 
 对 \(\mathbf G\ne0\)，Hartree 势为
 
@@ -174,7 +180,7 @@ V_H(\mathbf G)=\frac{4\pi}{G^2}n(\mathbf G),
 E_H=\frac12\int_\Omega n(\mathbf r)V_H(\mathbf r)\,d\mathbf r.
 \]
 
-当前手写的非自旋极化 LDA exchange 是
+保留用于解析验证的非自旋极化 LDA exchange 是
 
 \[
 E_x[n]= -\frac34\left(\frac3\pi\right)^{1/3}
@@ -186,7 +192,7 @@ V_x(\mathbf r)=\frac{\delta E_x}{\delta n(\mathbf r)}
 =-\left(\frac3\pi\right)^{1/3}n(\mathbf r)^{1/3}.
 \]
 
-计划用 LibXC 统一处理交换和关联。对 LDA，LibXC 返回每粒子能量
+SCF 用 LibXC 统一处理交换和关联。对 LDA，LibXC 返回每粒子能量
 \(\varepsilon_{\mathrm{xc}}(n)\) 和能量密度的一阶导数，因此网格上的转换是
 
 \[
@@ -201,14 +207,17 @@ V_{\mathrm{xc},p}
 \bigg|_{n=n_p}.
 \]
 
-为了匹配 `*.pz-*.UPF`，第一组 LibXC functional 计划选择：
+为了匹配 `*.pz-*.UPF`，当前选择：
 
 - `XC_LDA_X`：Slater/Dirac LDA exchange；
 - `XC_LDA_C_PZ`：Perdew–Zunger LDA correlation。
 
 初始接口保持 `XC_UNPOLARIZED`。LibXC 要求输入密度非负，因此进入库前只应
 清理数值噪声导致的微小负值，而不能用 density floor 改变正常低密度区域。
-实现后应保留上述解析 exchange 作为单元测试 oracle。
+上述解析 exchange 仍保留为单元测试 oracle；它不再是 SCF 的生产路径。
+`SCFOptions::lda_functional` 默认选择 `PerdewZunger`，也可选择
+`ExchangeOnly` 做回归比较。LibXC functional 对象在一次 SCF 开始前初始化，
+随后跨迭代复用，而不是对每个网格点重复初始化。
 
 LibXC 的 `exc` 是每粒子能量，而 `vrho` 是单位体积能量对密度的一阶导数；
 不要把 `exc` 直接当成势。参考
@@ -219,7 +228,7 @@ LibXC 的 `exc` 是每粒子能量，而 `vrho` 是单位体积能量对密度�
 当前零温总能量写成
 
 \[
-E_{\mathrm{tot}}=T_s+E_H+E_x+E_{\mathrm{ext,loc}}
+E_{\mathrm{tot}}=T_s+E_H+E_x+E_c+E_{\mathrm{ext,loc}}
 +E_{\mathrm{NL}}+E_{\mathrm{II}}^{\mathrm{smooth}}.
 \]
 
@@ -349,11 +358,31 @@ NC-UPF v2 的第一版 reader 读取：
 - `PP_BETA.*`；
 - `PP_DIJ`。
 
-`PP_R` 是 Bohr 径向网格。按照 UPF 文件约定，`PP_RAB` 提供离散径向积分
-因子：
+`PP_R` 是 Bohr 径向网格。常见 Quantum ESPRESSO 对数网格可写成
 
 \[
-\int f(r)\,dr\simeq\sum_i f(r_i)\,\mathrm{rab}_i.
+r_i=\frac{e^{x_i}}{z_{\mathrm{mesh}}},
+\qquad x_i=x_{\min}+i\Delta x.
+\]
+
+`PP_RAB` 存的是变量代换产生的原始网格因子；对上述网格，
+
+\[
+\mathrm{rab}_i=\frac{dr}{dx}\bigg|_{x_i}\Delta x=r_i\Delta x.
+\]
+
+它还不是完整 Simpson 权重。网格点数为奇数时，代码通过
+`make_upf_simpson_weights` 构造
+
+\[
+w_i=\frac{c_i}{3}\,\mathrm{rab}_i,
+\qquad c_i=1,4,2,4,\ldots,2,4,1,
+\]
+
+于是径向积分离散为
+
+\[
+\int f(r)\,dr\simeq\sum_i w_i f(r_i).
 \]
 
 球对称函数的三维 Fourier 变换归结为
@@ -381,7 +410,7 @@ rj_l(Gr)u_{\beta,l}(r)\,dr,
 
 \[
 \widetilde\beta_l(G)\simeq4\pi\sum_i
-r_i j_l(Gr_i)u_{\beta,l}(r_i)\,\mathrm{rab}_i.
+r_i j_l(Gr_i)u_{\beta,l}(r_i)\,w_i.
 \]
 
 对于位于 \(\mathbf R_I\) 的角动量 projector，平面波矩阵元还包含
@@ -569,9 +598,7 @@ UPF 格式和字段定义参考
 
 ## 12. 下一步路线
 
-1. 用 LibXC 的 `XC_LDA_X + XC_LDA_C_PZ` 替换 SCF 内部 exchange-only 路径，
-   保留解析 exchange 回归测试；
-2. 从 `PP_LOCAL` 构造去 Coulomb-tail 的径向变换，并明确 \(G=0\) 约定；
-3. 从 `PP_BETA.*` 构造带球谐简并度的倒空间 projector；
-4. 用完整 \(D_{ij}\) 重构 \(H\psi\)、\(E_{\mathrm{NL}}\) 和非局域力；
-5. 用原子、二原子和 Quantum ESPRESSO 参考计算逐层验证。
+1. 从 `PP_LOCAL` 构造去 Coulomb-tail 的径向变换，并明确 \(G=0\) 约定；
+2. 从 `PP_BETA.*` 构造带球谐简并度的倒空间 projector；
+3. 用完整 \(D_{ij}\) 重构 \(H\psi\)、\(E_{\mathrm{NL}}\) 和非局域力；
+4. 用原子、二原子和 Quantum ESPRESSO 参考计算逐层验证。

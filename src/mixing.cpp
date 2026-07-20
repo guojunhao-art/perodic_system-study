@@ -288,7 +288,7 @@ double pulay_mix_density(
      * 7. Clean up density.
      *
      * Pulay extrapolation can create tiny negative density.
-     * For LDA exchange rho^(1/3), negative rho is problematic.
+     * LibXC exchange-correlation functionals require non-negative density.
      */
     for (double& x : rho_next) {
         if (x < 0.0) {

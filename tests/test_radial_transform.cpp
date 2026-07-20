@@ -76,6 +76,35 @@ void test_spherical_bessel_values() {
     require_less(max_error, 2.0e-10, "spherical-Bessel value error");
 }
 
+void test_upf_simpson_weights() {
+    const std::vector<double> rab(5, 1.0);
+    const auto weights = make_upf_simpson_weights(rab);
+    const std::vector<double> expected{
+        1.0 / 3.0,
+        4.0 / 3.0,
+        2.0 / 3.0,
+        4.0 / 3.0,
+        1.0 / 3.0
+    };
+
+    double max_weight_error = 0.0;
+    double cubic_integral = 0.0;
+    for (int i = 0; i < static_cast<int>(weights.size()); ++i) {
+        max_weight_error = std::max(
+            max_weight_error,
+            std::abs(weights[i] - expected[i])
+        );
+        cubic_integral += weights[i] * std::pow(static_cast<double>(i), 3);
+    }
+
+    require_less(max_weight_error, 1.0e-15, "UPF Simpson weight error");
+    require_less(
+        std::abs(cubic_integral - 64.0),
+        1.0e-13,
+        "UPF Simpson cubic-integral error"
+    );
+}
+
 void test_s_gaussian_transform() {
     const double alpha = 0.70;
     const auto grid = make_uniform_simpson_grid(10.0, 12001);
@@ -142,6 +171,7 @@ int main() {
     try {
         std::cout << std::setprecision(12);
         test_spherical_bessel_values();
+        test_upf_simpson_weights();
         test_s_gaussian_transform();
         test_p_gaussian_transform();
     } catch (const std::exception& error) {

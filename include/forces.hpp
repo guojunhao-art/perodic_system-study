@@ -2,6 +2,7 @@
 
 #include "core.hpp"
 #include "potentials.hpp"
+#include "upf_local_potential.hpp"
 
 #include <Eigen/Dense>
 #include <complex>
@@ -23,6 +24,18 @@ std::vector<Eigen::Vector3d> compute_local_ionic_forces(
     const Lattice& lattice,
     const FFTGrid& grid,
     const std::vector<Ion>& ions,
+    const std::vector<std::complex<double>>& n_G);
+
+/*
+ * The same local Hellmann--Feynman force for screened NC-UPF local
+ * potentials. The species/ion arrays use the same convention as
+ * build_upf_local_potential_G().
+ */
+std::vector<Eigen::Vector3d> compute_upf_local_ionic_forces(
+    const Lattice& lattice,
+    const FFTGrid& grid,
+    const std::vector<UPFLocalSpecies>& species,
+    const std::vector<UPFLocalIon>& ions,
     const std::vector<std::complex<double>>& n_G);
 
 /* Force obtained by differentiating E_II^smooth. */

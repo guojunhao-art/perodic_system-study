@@ -1,13 +1,15 @@
 #include "upf_reader.hpp"
+#include "upf_local_potential.hpp"
 
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        std::cerr << "Usage: upf_info FILE.UPF\n";
+    if (argc != 2 && argc != 3) {
+        std::cerr << "Usage: upf_info FILE.UPF [GAUSSIAN_WIDTH_BOHR]\n";
         return 2;
     }
 
@@ -53,6 +55,33 @@ int main(int argc, char** argv) {
                 }
                 std::cout << "\n";
             }
+        }
+
+        if (argc == 3) {
+            const double sigma = std::stod(argv[2]);
+            const UPFLocalSpecies local =
+                prepare_upf_local_species(upf, sigma);
+
+            std::cout << "\nScreened local potential\n"
+                      << "------------------------\n"
+                      << "Gaussian sigma (Bohr) : " << sigma << "\n"
+                      << "Delta V(rmax) (Ha)    : "
+                      << std::scientific << std::setprecision(10)
+                      << local.correction_hartree.back() << "\n"
+                      << "isolated radial transforms (Ha Bohr^3):\n"
+                      << "       G        Delta V(G)          full kernel\n";
+            for (double g : std::vector<double>{0.0, 0.5, 1.0, 2.0, 4.0}) {
+                std::cout << "  " << std::setw(7) << std::fixed
+                          << std::setprecision(2) << g
+                          << "  " << std::setw(18) << std::scientific
+                          << std::setprecision(10)
+                          << upf_local_correction_transform(local, g)
+                          << "  " << std::setw(18)
+                          << upf_local_kernel_G(local, g)
+                          << "\n";
+            }
+            std::cout << "At G=0 the full-kernel column is the standard "
+                      << "finite integral of V_loc + Z/r.\n";
         }
     } catch (const std::exception& error) {
         std::cerr << error.what() << "\n";

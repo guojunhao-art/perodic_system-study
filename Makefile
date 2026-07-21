@@ -54,6 +54,9 @@ upf_info: src/upf_reader.cpp src/radial_transform.cpp src/upf_local_potential.cp
 h2_opt: $(CORE_SRC) app/h2_opt.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
+si2_force_check: $(CORE_SRC) app/si2_force_check.cpp
+	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+
 test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian
 	./test_forces
 	./test_scf_force_fd
@@ -67,4 +70,4 @@ test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_x
 	./test_batched_hamiltonian
 
 clean:
-	rm -f fft upf_info h2_opt test_forces test_scf_force_fd test_radial_transform test_upf_reader test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian
+	rm -f fft upf_info h2_opt si2_force_check test_forces test_scf_force_fd test_radial_transform test_upf_reader test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian

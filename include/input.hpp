@@ -36,7 +36,14 @@ struct KPoint {
 
 struct KPointSet {
     std::vector<KPoint> points{{}};
+    std::string description = "Gamma";
 };
+
+KPointSet make_uniform_kpoint_mesh(
+    const std::array<int, 3>& mesh,
+    bool gamma_centered);
+
+void normalize_kpoint_weights(KPointSet& kpoints);
 
 struct CalculationConfig {
     std::string source_path;

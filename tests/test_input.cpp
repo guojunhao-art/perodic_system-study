@@ -157,6 +157,46 @@ int main() {
         require_true(config.scf.verbosity == SCFVerbosity::Detailed,
                      "verbosity parsing mismatch");
 
+        const KPointSet gamma_mesh = make_uniform_kpoint_mesh(
+            {{2, 1, 1}}, true
+        );
+        require_true(gamma_mesh.points.size() == 2,
+                     "Gamma-centered mesh size mismatch");
+        require_close(gamma_mesh.points[0].frac_position[0], 0.0, 1.0e-14,
+                      "Gamma-centered first point");
+        require_close(gamma_mesh.points[1].frac_position[0], -0.5, 1.0e-14,
+                      "Gamma-centered boundary point");
+        require_close(gamma_mesh.points[0].weight, 0.5, 1.0e-14,
+                      "Gamma-centered mesh weight");
+
+        const CalculationConfig mesh_config = read_calculation_config(
+            data_path("kpoints_mesh_scf.in")
+        );
+        require_true(mesh_config.kpoints.points.size() == 6,
+                     "Monkhorst-Pack mesh size mismatch");
+        require_close(
+            mesh_config.kpoints.points.front().frac_position[0],
+            -0.25,
+            1.0e-14,
+            "Monkhorst-Pack x shift"
+        );
+        require_close(
+            mesh_config.kpoints.points.front().frac_position[1],
+            -1.0 / 3.0,
+            1.0e-14,
+            "Monkhorst-Pack y shift"
+        );
+
+        const CalculationConfig explicit_config = read_calculation_config(
+            data_path("kpoints_explicit_scf.in")
+        );
+        require_true(explicit_config.kpoints.points.size() == 2,
+                     "Explicit k-point count mismatch");
+        require_close(explicit_config.kpoints.points[0].weight, 0.25, 1.0e-14,
+                      "First normalized explicit weight");
+        require_close(explicit_config.kpoints.points[1].weight, 0.75, 1.0e-14,
+                      "Second normalized explicit weight");
+
         std::cout << "POSCAR and calculation-input tests passed.\n";
         return 0;
     } catch (const std::exception& error) {

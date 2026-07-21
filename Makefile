@@ -15,10 +15,7 @@ CORE_LDLIBS = $(LDLIBS) $(LIBXC_LIBS)
 
 CORE_SRC = $(wildcard src/*.cpp)
 
-fft: $(CORE_SRC) app/main.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
-
-pwdft: $(CORE_SRC) app/pwdft.cpp
+pwdft: $(CORE_SRC) app/main.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test_forces: $(CORE_SRC) tests/test_forces.cpp
@@ -54,6 +51,9 @@ test_upf_reader: src/upf_reader.cpp tests/test_upf_reader.cpp
 test_input: src/input.cpp tests/test_input.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -DTEST_DATA_DIR=\"tests/data\" $^ -o $@
 
+test_kpoints: $(CORE_SRC) tests/test_kpoints.cpp
+	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+
 upf_info: src/upf_reader.cpp src/radial_transform.cpp src/upf_local_potential.cpp app/upf_info.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
@@ -63,12 +63,13 @@ h2_opt: $(CORE_SRC) app/h2_opt.cpp
 si2_force_check: $(CORE_SRC) app/si2_force_check.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
-test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian
+test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_kpoints test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian
 	./test_forces
 	./test_scf_force_fd
 	./test_radial_transform
 	./test_upf_reader
 	./test_input
+	./test_kpoints
 	./test_xc_functional
 	./test_upf_local_potential
 	./test_upf_nonlocal
@@ -77,4 +78,4 @@ test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_i
 	./test_batched_hamiltonian
 
 clean:
-	rm -f fft pwdft upf_info h2_opt si2_force_check test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian
+	rm -f fft pwdft upf_info h2_opt si2_force_check test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_kpoints test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian

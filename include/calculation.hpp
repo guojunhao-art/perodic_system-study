@@ -18,7 +18,7 @@ struct SinglePointResult {
     double total_valence_charge = 0.0;
 
     SCFOptions options_used;
-    SCFResult scf;
+    KPointSCFResult scf;
     IonicForceComponents forces;
 };
 

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 std::vector<double> build_density_from_orbitals(
@@ -179,33 +180,6 @@ LDAExchangeResult build_lda_exchange(
     }
 
     return out;
-}
-
-std::vector<double> build_toy_ionic_potential(
-    const FFTGrid& grid,
-    double V0) {
-
-    std::vector<double> Vion(grid.ngrid, 0.0);
-
-    for (int i = 0; i < grid.n1; ++i) {
-        for (int j = 0; j < grid.n2; ++j) {
-            for (int k = 0; k < grid.n3; ++k) {
-                const int p = grid.index(i, j, k);
-
-                const Eigen::Vector3d s =
-                    grid.frac_coord(i, j, k);
-
-                Vion[p] =
-                    V0 * (
-                        std::cos(2.0 * M_PI * s[0]) +
-                        std::cos(2.0 * M_PI * s[1]) +
-                        std::cos(2.0 * M_PI * s[2])
-                    );
-            }
-        }
-    }
-
-    return Vion;
 }
 
 std::vector<double> combine_effective_potential(
@@ -526,6 +500,236 @@ OccupationResult compute_occupations(
 
     throw std::runtime_error("Unknown occupation mode.");
 }
+
+KPointOccupationResult compute_kpoint_occupations(
+    const std::vector<Eigen::VectorXd>& eigenvalues,
+    const std::vector<double>& weights,
+    double nelec,
+    OccupationMode mode,
+    const std::vector<double>& fixed_occ,
+    double sigma,
+    double deg_tol) {
+
+    if (eigenvalues.empty() || eigenvalues.size() != weights.size()) {
+        throw std::runtime_error(
+            "K-point eigenvalues and weights must have the same nonzero size."
+        );
+    }
+    if (!std::isfinite(nelec) || nelec < -1.0e-12) {
+        throw std::runtime_error("K-point electron number cannot be negative.");
+    }
+    if (!std::isfinite(deg_tol) || deg_tol <= 0.0) {
+        throw std::runtime_error(
+            "K-point degeneracy tolerance must be positive."
+        );
+    }
+
+    double weight_sum = 0.0;
+    int total_states = 0;
+    for (int ik = 0; ik < static_cast<int>(weights.size()); ++ik) {
+        if (!std::isfinite(weights[ik]) || weights[ik] <= 0.0) {
+            throw std::runtime_error(
+                "K-point weights must be positive and finite."
+            );
+        }
+        if (eigenvalues[ik].size() <= 0 ||
+            !eigenvalues[ik].allFinite()) {
+            throw std::runtime_error(
+                "Every k point must provide finite band eigenvalues."
+            );
+        }
+        weight_sum += weights[ik];
+        total_states += eigenvalues[ik].size();
+    }
+    if (std::abs(weight_sum - 1.0) > 1.0e-12) {
+        throw std::runtime_error("Normalized k-point weights must sum to one.");
+    }
+
+    KPointOccupationResult result;
+    result.occupations.resize(eigenvalues.size());
+    for (int ik = 0; ik < static_cast<int>(eigenvalues.size()); ++ik) {
+        result.occupations[ik].assign(eigenvalues[ik].size(), 0.0);
+    }
+
+    if (mode == OccupationMode::Fixed) {
+        double highest_occupied = -std::numeric_limits<double>::infinity();
+        for (int ik = 0; ik < static_cast<int>(eigenvalues.size()); ++ik) {
+            if (static_cast<int>(fixed_occ.size()) != eigenvalues[ik].size()) {
+                throw std::runtime_error(
+                    "Fixed occupations must contain one value per band."
+                );
+            }
+            result.occupations[ik] = fixed_occ;
+            for (int ib = 0; ib < eigenvalues[ik].size(); ++ib) {
+                const double occupation = fixed_occ[ib];
+                if (!std::isfinite(occupation) ||
+                    occupation < 0.0 || occupation > 2.0) {
+                    throw std::runtime_error(
+                        "Each fixed occupation must be in [0, 2]."
+                    );
+                }
+                result.nelec_sum += weights[ik] * occupation;
+                if (occupation > 1.0e-12) {
+                    highest_occupied = std::max(
+                        highest_occupied, eigenvalues[ik][ib]
+                    );
+                }
+            }
+        }
+        if (std::abs(result.nelec_sum - nelec) > 1.0e-10) {
+            throw std::runtime_error(
+                "Weighted fixed occupations do not sum to nelect."
+            );
+        }
+        result.mu = std::isfinite(highest_occupied)
+            ? highest_occupied
+            : eigenvalues.front()[0];
+        return result;
+    }
+
+    struct WeightedState {
+        double energy = 0.0;
+        int kpoint = 0;
+        int band = 0;
+        double weight = 0.0;
+    };
+    std::vector<WeightedState> states;
+    states.reserve(total_states);
+    double maximum_capacity = 0.0;
+    for (int ik = 0; ik < static_cast<int>(eigenvalues.size()); ++ik) {
+        maximum_capacity +=
+            2.0 * weights[ik] * eigenvalues[ik].size();
+        for (int ib = 0; ib < eigenvalues[ik].size(); ++ib) {
+            states.push_back({
+                eigenvalues[ik][ib], ik, ib, weights[ik]
+            });
+        }
+    }
+    if (nelec > maximum_capacity + 1.0e-12) {
+        throw std::runtime_error(
+            "Not enough weighted k-point bands to hold all electrons."
+        );
+    }
+    std::sort(
+        states.begin(), states.end(),
+        [](const WeightedState& lhs, const WeightedState& rhs) {
+            if (lhs.energy != rhs.energy) {
+                return lhs.energy < rhs.energy;
+            }
+            if (lhs.kpoint != rhs.kpoint) {
+                return lhs.kpoint < rhs.kpoint;
+            }
+            return lhs.band < rhs.band;
+        }
+    );
+
+    if (mode == OccupationMode::DegeneracyAwareZeroT) {
+        double remaining = nelec;
+        int first = 0;
+        while (first < static_cast<int>(states.size()) &&
+               remaining > 1.0e-12) {
+            int last = first + 1;
+            while (last < static_cast<int>(states.size()) &&
+                   std::abs(states[last].energy - states[first].energy)
+                       < deg_tol) {
+                ++last;
+            }
+            double shell_weight = 0.0;
+            for (int index = first; index < last; ++index) {
+                shell_weight += states[index].weight;
+            }
+            const double shell_capacity = 2.0 * shell_weight;
+            const double occupation = remaining >= shell_capacity - 1.0e-12
+                ? 2.0
+                : remaining / shell_weight;
+            for (int index = first; index < last; ++index) {
+                const WeightedState& state = states[index];
+                result.occupations[state.kpoint][state.band] = occupation;
+            }
+            remaining -= std::min(remaining, shell_capacity);
+            first = last;
+        }
+
+        double highest_occupied = -std::numeric_limits<double>::infinity();
+        double lowest_not_full = std::numeric_limits<double>::infinity();
+        bool partially_occupied = false;
+        for (const WeightedState& state : states) {
+            const double occupation =
+                result.occupations[state.kpoint][state.band];
+            result.nelec_sum += state.weight * occupation;
+            if (occupation > 1.0e-12) {
+                highest_occupied = std::max(
+                    highest_occupied, state.energy
+                );
+            }
+            if (occupation < 2.0 - 1.0e-12) {
+                lowest_not_full = std::min(lowest_not_full, state.energy);
+            }
+            if (occupation > 1.0e-12 && occupation < 2.0 - 1.0e-12) {
+                result.mu = state.energy;
+                partially_occupied = true;
+            }
+        }
+        if (!partially_occupied) {
+            if (std::isfinite(highest_occupied) &&
+                std::isfinite(lowest_not_full)) {
+                result.mu = 0.5 * (highest_occupied + lowest_not_full);
+            } else if (std::isfinite(highest_occupied)) {
+                result.mu = highest_occupied;
+            } else {
+                result.mu = states.front().energy;
+            }
+        }
+        return result;
+    }
+
+    if (mode != OccupationMode::FermiDirac) {
+        throw std::runtime_error("Unknown k-point occupation mode.");
+    }
+    if (!std::isfinite(sigma) || sigma <= 0.0) {
+        throw std::runtime_error(
+            "Fermi-Dirac k-point occupations require positive sigma."
+        );
+    }
+
+    double mu_low = states.front().energy - std::max(1.0, 100.0 * sigma);
+    double mu_high = states.back().energy + std::max(1.0, 100.0 * sigma);
+    auto electron_count_at_mu = [&](double mu) {
+        double electron_count = 0.0;
+        for (const WeightedState& state : states) {
+            electron_count += state.weight * fermi_dirac_occ_single(
+                state.energy, mu, sigma, 2.0
+            );
+        }
+        return electron_count;
+    };
+    for (int iteration = 0; iteration < 200; ++iteration) {
+        const double mu = 0.5 * (mu_low + mu_high);
+        if (electron_count_at_mu(mu) > nelec) {
+            mu_high = mu;
+        } else {
+            mu_low = mu;
+        }
+    }
+    result.mu = 0.5 * (mu_low + mu_high);
+    for (const WeightedState& state : states) {
+        const double occupation = fermi_dirac_occ_single(
+            state.energy, result.mu, sigma, 2.0
+        );
+        result.occupations[state.kpoint][state.band] = occupation;
+        result.nelec_sum += state.weight * occupation;
+        const double probability = 0.5 * occupation;
+        if (probability > 1.0e-14 &&
+            probability < 1.0 - 1.0e-14) {
+            result.entropy += state.weight * -2.0 * (
+                probability * std::log(probability)
+                + (1.0 - probability) * std::log(1.0 - probability)
+            );
+        }
+    }
+    return result;
+}
+
 double compute_kinetic_energy(
     const PlaneWaveBasis3D& basis,
     const Eigen::MatrixXcd& C,

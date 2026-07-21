@@ -18,6 +18,13 @@ struct OccupationResult {
     double entropy = 0.0;
 };
 
+struct KPointOccupationResult {
+    std::vector<std::vector<double>> occupations;
+    double mu = 0.0;
+    double nelec_sum = 0.0;
+    double entropy = 0.0;
+};
+
 struct LDAExchangeResult {
     std::vector<double> Vx;
     double Ex = 0.0;
@@ -59,10 +66,6 @@ LDAExchangeResult build_lda_exchange(
     const std::vector<double>& rho,
     double dV);
 
-std::vector<double> build_toy_ionic_potential(
-    const FFTGrid& grid,
-    double V0);
-
 std::vector<double> combine_effective_potential(
     const std::vector<double>& Vion,
     const std::vector<double>& VH,
@@ -90,6 +93,15 @@ OccupationResult fermi_dirac_occupations(
 
 OccupationResult compute_occupations(
     const Eigen::VectorXd& eps,
+    double nelec,
+    OccupationMode mode,
+    const std::vector<double>& fixed_occ,
+    double sigma,
+    double deg_tol);
+
+KPointOccupationResult compute_kpoint_occupations(
+    const std::vector<Eigen::VectorXd>& eigenvalues,
+    const std::vector<double>& weights,
     double nelec,
     OccupationMode mode,
     const std::vector<double>& fixed_occ,

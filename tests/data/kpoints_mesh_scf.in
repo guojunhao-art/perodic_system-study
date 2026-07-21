@@ -1,0 +1,7 @@
+calculation = scf
+structure = POSCAR_direct_selective
+pseudo = Si minimal_sp_nc.upf
+pseudo = H minimal_local_nc.upf
+kpoints = monkhorst_pack 2 3 1
+ecut_ha = 8.0
+fft_grid = 20 20 20

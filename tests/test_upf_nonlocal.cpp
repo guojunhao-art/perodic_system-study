@@ -305,7 +305,9 @@ void test_nonlocal_force_finite_difference() {
         Eigen::Vector3d(0.0, 0.0, cell)
     );
     PlaneWaveBasis3D basis;
-    basis.generate(lattice, Eigen::Vector3d::Zero(), 2.2);
+    const Eigen::Vector3d k_cart = lattice.B
+        * Eigen::Vector3d(0.17, -0.11, 0.08);
+    basis.generate(lattice, k_cart, 2.2);
     const std::vector<UPFNonlocalSpecies> species{make_two_s_species()};
     const UPFLocalIon reference{0, Eigen::Vector3d(0.19, 0.31, 0.47)};
 
@@ -349,7 +351,7 @@ void test_nonlocal_force_finite_difference() {
     require_less(
         (analytic - finite_difference).cwiseAbs().maxCoeff(),
         2.0e-9,
-        "UPF nonlocal-force finite-difference error"
+        "shifted-k UPF nonlocal-force finite-difference error"
     );
 }
 

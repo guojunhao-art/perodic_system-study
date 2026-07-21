@@ -299,7 +299,7 @@ std::vector<NonlocalProjector> build_upf_nonlocal_projectors(
                 radial_transforms[ip][ig] =
                     radial_fourier_bessel_transform_from_r_times_function(
                         projector.angular_momentum,
-                        basis.gvectors[ig].G_cart.norm(),
+                        basis.gvectors[ig].q_cart.norm(),
                         one_species.radial_grid_bohr,
                         one_species.quadrature_weights,
                         projector.r_times_beta
@@ -339,16 +339,16 @@ std::vector<NonlocalProjector> build_upf_nonlocal_projectors(
                         Eigen::VectorXcd::Zero(basis.size());
                     const int ip = indices[iradial];
                     for (int ig = 0; ig < basis.size(); ++ig) {
-                        const Eigen::Vector3d& G =
-                            basis.gvectors[ig].G_cart;
+                        const Eigen::Vector3d& q =
+                            basis.gvectors[ig].q_cart;
                         const std::vector<double> harmonics =
-                            qe_real_spherical_harmonics(l, G);
+                            qe_real_spherical_harmonics(l, q);
                         raw[ig] =
                             inverse_sqrt_volume
                             * angular_phase
                             * harmonics[m]
                             * radial_transforms[ip][ig]
-                            * translation_phase(G, R);
+                            * translation_phase(q, R);
                     }
                     raw_projectors.push_back(std::move(raw));
                 }

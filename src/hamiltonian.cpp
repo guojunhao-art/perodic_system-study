@@ -254,19 +254,89 @@ Eigen::MatrixXcd apply_hamiltonian_to_block(
     const Eigen::MatrixXcd& V,
     const std::vector<NonlocalProjector>* projectors) {
 
+    if (V.rows() != basis.size()) {
+        throw std::runtime_error(
+            "Hamiltonian block row count does not match basis size."
+        );
+    }
+    if (static_cast<int>(V_r.size()) != fft.grid.ngrid) {
+        throw std::runtime_error("V_r size does not match FFT grid.");
+    }
+
     const int nrows = V.rows();
     const int ncols = V.cols();
-
     Eigen::MatrixXcd W(nrows, ncols);
+    if (ncols == 0) {
+        return W;
+    }
 
-    for (int j = 0; j < ncols; ++j) {
-        W.col(j) = apply_hamiltonian_eigen(
-            basis,
-            fft,
-            V_r,
-            V.col(j),
-            projectors
+    /*
+     * Bound temporary memory for calculations with many bands.  At the
+     * current small-system scale Davidson blocks normally fit in one chunk.
+     */
+    constexpr int maximum_fft_batch = 16;
+    const double inverse_grid_size =
+        1.0 / static_cast<double>(fft.grid.ngrid);
+    std::vector<int> grid_indices(basis.size(), 0);
+    for (int ig = 0; ig < basis.size(); ++ig) {
+        grid_indices[ig] =
+            fft.grid.index_from_freq(basis.gvectors[ig].n);
+    }
+
+    for (int first = 0; first < ncols; first += maximum_fft_batch) {
+        const int count = std::min(maximum_fft_batch, ncols - first);
+        const auto& plans = fft.ensure_batch_plans(count);
+        const std::size_t active_size =
+            static_cast<std::size_t>(count)
+            * static_cast<std::size_t>(fft.grid.ngrid);
+
+        std::fill(
+            fft.batch_reciprocal_grid.begin(),
+            fft.batch_reciprocal_grid.begin() + active_size,
+            std::complex<double>(0.0, 0.0)
         );
+
+        for (int local_col = 0; local_col < count; ++local_col) {
+            const std::size_t offset =
+                static_cast<std::size_t>(local_col)
+                * static_cast<std::size_t>(fft.grid.ngrid);
+            for (int ig = 0; ig < basis.size(); ++ig) {
+                const int p = grid_indices[ig];
+                fft.batch_reciprocal_grid[offset + p] =
+                    V(ig, first + local_col);
+            }
+        }
+
+        fftw_execute(plans.backward);
+
+        for (int local_col = 0; local_col < count; ++local_col) {
+            const std::size_t offset =
+                static_cast<std::size_t>(local_col)
+                * static_cast<std::size_t>(fft.grid.ngrid);
+            for (int p = 0; p < fft.grid.ngrid; ++p) {
+                fft.batch_real_grid[offset + p] *= V_r[p];
+            }
+        }
+
+        fftw_execute(plans.forward);
+
+        for (int local_col = 0; local_col < count; ++local_col) {
+            const int column = first + local_col;
+            const std::size_t offset =
+                static_cast<std::size_t>(local_col)
+                * static_cast<std::size_t>(fft.grid.ngrid);
+            for (int ig = 0; ig < basis.size(); ++ig) {
+                const int p = grid_indices[ig];
+                W(ig, column) =
+                    fft.batch_reciprocal_grid[offset + p]
+                    * inverse_grid_size
+                    + basis.gvectors[ig].kinetic * V(ig, column);
+            }
+        }
+    }
+
+    if (projectors != nullptr) {
+        W += apply_nonlocal_projectors(*projectors, V);
     }
 
     return W;

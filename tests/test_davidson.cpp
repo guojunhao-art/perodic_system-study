@@ -127,7 +127,16 @@ void test_davidson_against_dense_reference() {
     std::cout << "Davidson iterations = " << result.iterations
               << "  Hpsi applications = "
               << result.hamiltonian_applications
+              << "  H blocks = "
+              << result.hamiltonian_block_calls
               << "  basis size = " << basis.size() << "\n";
+
+    if (result.hamiltonian_block_calls <= 0 ||
+        result.hamiltonian_block_calls >= result.hamiltonian_applications) {
+        throw std::runtime_error(
+            "Davidson Hamiltonian applications were not grouped into blocks."
+        );
+    }
     if (result.hamiltonian_applications > basis.size()) {
         throw std::runtime_error(
             "Davidson W=HV cache applied H repeatedly to old directions."

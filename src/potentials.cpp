@@ -473,6 +473,29 @@ Eigen::VectorXcd apply_nonlocal_projectors(
     return out;
 }
 
+Eigen::MatrixXcd apply_nonlocal_projectors(
+    const std::vector<NonlocalProjector>& projectors,
+    const Eigen::MatrixXcd& C) {
+
+    Eigen::MatrixXcd out = Eigen::MatrixXcd::Zero(C.rows(), C.cols());
+
+    for (const NonlocalProjector& proj : projectors) {
+        if (proj.beta_G.size() != C.rows()) {
+            throw std::runtime_error("Projector size mismatch.");
+        }
+
+        /*
+         * Apply one separable projector to every state at once:
+         *
+         *   B D B^dagger C = beta D (beta^dagger C).
+         */
+        out.noalias() +=
+            proj.D * proj.beta_G * (proj.beta_G.adjoint() * C);
+    }
+
+    return out;
+}
+
 double compute_nonlocal_energy(
     const std::vector<NonlocalProjector>& projectors,
     const Eigen::MatrixXcd& C,

@@ -58,6 +58,10 @@ Eigen::VectorXcd apply_hamiltonian_eigen(
     const Eigen::VectorXcd& c,
     const std::vector<NonlocalProjector>* projectors = nullptr);
 
+/*
+ * Apply H to a column block using cached FFTW plan-many transforms.  Large
+ * blocks are processed in bounded chunks to limit temporary FFT storage.
+ */
 Eigen::MatrixXcd apply_hamiltonian_to_block(
     const PlaneWaveBasis3D& basis,
     FFTWorkspace& fft,

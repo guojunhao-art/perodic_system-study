@@ -5,9 +5,11 @@
 #include "potentials.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iomanip>
 #include <ostream>
+#include <sstream>
 #include <stdexcept>
 
 namespace {
@@ -66,7 +68,7 @@ void print_compact_header(std::ostream& out) {
         << "-------------------------------- electronic minimization "
         << "--------------------------------\n"
         << "          N                     E              dE"
-        << "        rms(rho)  Ndiag      rms(eig)\n";
+        << "        rms(rho)  Niter  N_Hpsi      rms(eig)\n";
 }
 
 void print_compact_iteration(
@@ -76,6 +78,7 @@ void print_compact_iteration(
     double signed_dE,
     double drho,
     int davidson_iterations,
+    int hamiltonian_applications,
     double eigensolver_residual) {
 
     const auto old_flags = out.flags();
@@ -87,6 +90,7 @@ void print_compact_iteration(
         << "  " << std::setprecision(4) << std::setw(12) << signed_dE
         << "  " << std::setw(12) << drho
         << "  " << std::setw(5) << davidson_iterations
+        << "  " << std::setw(7) << hamiltonian_applications
         << "  " << std::setw(12) << eigensolver_residual
         << "\n";
 
@@ -155,7 +159,16 @@ void print_compact_summary(
         << std::setw(20) << free_energy_with_ions
         << " E0= " << std::setw(20) << sigma0_with_ions
         << "  d E = " << std::setprecision(4) << std::setw(12) << signed_dE
-        << "\n";
+        << "\n"
+        << "  eigensolver work: N_Hpsi = "
+        << result.eigensolver_hamiltonian_applications
+        << "  N_iter = " << result.eigensolver_iterations
+        << "  restarts = " << result.eigensolver_restarts
+        << "  Hpsi_time = " << std::fixed << std::setprecision(3)
+        << result.eigensolver_hamiltonian_seconds << " s"
+        << "  subspace_time = "
+        << result.eigensolver_subspace_seconds << " s\n"
+        << "  SCF wall time = " << result.wall_time_seconds << " s\n";
 
     out.flags(old_flags);
     out.precision(old_precision);
@@ -173,6 +186,8 @@ SCFResult run_scf(
     const SCFOptions& options,
     const SCFInitialGuess& initial_guess,
     std::ostream* log_stream) {
+
+    const auto scf_start = std::chrono::steady_clock::now();
 
     validate_scf_inputs(
         basis,
@@ -248,8 +263,34 @@ SCFResult run_scf(
             logging_enabled && options.verbosity == SCFVerbosity::Detailed
         );
         if (!ks.converged) {
-            throw std::runtime_error("Davidson eigensolver did not converge during SCF.");
+            const double maximum_ks_residual =
+                maximum_residual(ks.residual_norms);
+            std::ostringstream message;
+            message
+                << "Davidson eigensolver did not converge during SCF: "
+                << "max residual = " << maximum_ks_residual
+                << ", requested tolerance = "
+                << options.eigensolver_tolerance
+                << ", worst band = " << ks.max_residual_band
+                << ", subspace = " << ks.final_subspace_size
+                << ", Hpsi applications = "
+                << ks.hamiltonian_applications
+                << ", projected Hermiticity error = "
+                << ks.projected_hermiticity_error;
+            if (ks.stagnated) {
+                message << ", stopped after repeated stagnation restarts";
+            }
+            throw std::runtime_error(message.str());
         }
+
+        result.eigensolver_hamiltonian_applications +=
+            ks.hamiltonian_applications;
+        result.eigensolver_iterations += ks.iterations;
+        result.eigensolver_restarts += ks.subspace_restarts;
+        result.eigensolver_hamiltonian_seconds +=
+            ks.hamiltonian_seconds;
+        result.eigensolver_subspace_seconds +=
+            ks.subspace_diagonalization_seconds;
 
         const OccupationResult occupations = compute_occupations(
             ks.eigenvalues,
@@ -333,6 +374,7 @@ SCFResult run_scf(
                 signed_dE,
                 drho,
                 ks.iterations,
+                ks.hamiltonian_applications,
                 maximum_residual(ks.residual_norms)
             );
         } else if (logging_enabled &&
@@ -362,6 +404,10 @@ SCFResult run_scf(
         previous_energy = energy_for_convergence;
         C_guess = orbitals;
     }
+
+    result.wall_time_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - scf_start
+    ).count();
 
     if (logging_enabled && options.verbosity == SCFVerbosity::Compact) {
         print_compact_summary(*log_stream, result, last_signed_energy_change);

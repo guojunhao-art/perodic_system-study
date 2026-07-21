@@ -108,3 +108,7 @@ add_test(NAME nc_upf_nonlocal COMMAND test_upf_nonlocal)
 add_executable(test_ewald tests/test_ewald.cpp)
 target_link_libraries(test_ewald PRIVATE pw_dft_core)
 add_test(NAME point_ion_ewald COMMAND test_ewald)
+
+add_executable(test_davidson tests/test_davidson.cpp)
+target_link_libraries(test_davidson PRIVATE pw_dft_core)
+add_test(NAME davidson_incremental_hpsi COMMAND test_davidson)

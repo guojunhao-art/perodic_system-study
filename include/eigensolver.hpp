@@ -18,7 +18,17 @@ struct DavidsonResult {
     Eigen::MatrixXcd eigenvectors;
     std::vector<double> residual_norms;
     int iterations = 0;
+    int hamiltonian_applications = 0;
+    int hamiltonian_block_calls = 0;
+    int subspace_restarts = 0;
+    int stagnation_restarts = 0;
+    int final_subspace_size = 0;
+    int max_residual_band = -1;
+    double hamiltonian_seconds = 0.0;
+    double subspace_diagonalization_seconds = 0.0;
+    double projected_hermiticity_error = 0.0;
     bool converged = false;
+    bool stagnated = false;
 };
 
 Eigen::MatrixXcd initial_low_kinetic_trials(

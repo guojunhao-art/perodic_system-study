@@ -68,6 +68,9 @@ target_link_libraries(upf_info PRIVATE pw_dft_core)
 add_executable(h2_opt app/h2_opt.cpp)
 target_link_libraries(h2_opt PRIVATE pw_dft_core)
 
+add_executable(si2_force_check app/si2_force_check.cpp)
+target_link_libraries(si2_force_check PRIVATE pw_dft_core)
+
 enable_testing()
 add_executable(test_forces tests/test_forces.cpp)
 target_link_libraries(test_forces PRIVATE pw_dft_core)

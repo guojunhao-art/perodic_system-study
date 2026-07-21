@@ -156,8 +156,10 @@ $$
 子空间里无限循环。
 
 SCF 行输出中的 `N_Hpsi` 是本轮对多少个向量实际施加了 Hamiltonian；末尾还会给出
-累计 `N_Hpsi`、Davidson 迭代/重启数、`Hpsi_time`、子空间对角化时间和 SCF 总时间。
-`h2_opt` 的每个几何点也会显示累计 `N_Hpsi` 与耗时。可以用下面三组输入建立串行基线：
+累计 `N_Hpsi`、`N_Hblock`、Davidson 迭代/重启数、`Hpsi_time`、子空间对角化时间和
+SCF 总时间。平均 block 宽度可由 `N_Hpsi/N_Hblock` 估计。
+`h2_opt` 的每个几何点也会显示 `N_Hpsi`、`N_Hblock`、$H\psi$ 耗时与 SCF 耗时。
+可以用下面三组输入建立串行基线：
 
 ```bash
 ./h2_opt pseudopotentials/H.pz-vbc.UPF 10.0 12.0 36
@@ -174,9 +176,43 @@ make test_davidson
 ./test_davidson
 ```
 
-这一阶段先消除串行算法中的重复工作并建立计数/计时基线。下一阶段再根据
-`Hpsi_time` 与 `subspace_time` 的占比决定优先做轨道批处理 FFT、FFTW threads / OpenMP，
-还是把较大的 Rayleigh--Ritz 交给并行线性代数；否则并行化容易掩盖真正的热点。
+### 1.4 批量 Hamiltonian 与 FFT
+
+`apply_hamiltonian_to_block` 不再逐列调用标量 $H\psi$。对一个含 $m$ 个轨道的 block，
+平面波系数被布置成 $m$ 个连续的三维 reciprocal grids，然后由
+`fftw_plan_many_dft` 批量执行
+
+$$
+C(\mathbf G)
+\xrightarrow{\mathrm{FFT}^{-1}}
+\psi(\mathbf r)
+\xrightarrow{V(\mathbf r)}
+V(\mathbf r)\psi(\mathbf r)
+\xrightarrow{\mathrm{FFT}}
+(V\psi)(\mathbf G).
+$$
+
+FFTW plan 按 block 宽度缓存并复用；共享缓冲区扩容前会先销毁旧 plan，避免 plan
+持有失效指针。单批最多处理 16 个轨道，因此临时内存为 $O(16N_{\mathrm{FFT}})$，
+而不是随总能带数无限增长。非局域算符也按 block 计算：
+
+$$
+V_{\mathrm{NL}}C
+=\sum_\alpha
+\beta_\alpha D_\alpha(\beta_\alpha^\dagger C).
+$$
+
+`test_batched_hamiltonian` 对 1、4、7、19 和 3 列的 block 依次比较批量与旧标量路径；
+19 列同时覆盖 16+3 的分块边界：
+
+```bash
+make test_batched_hamiltonian
+./test_batched_hamiltonian
+```
+
+完成这一层串行批处理后，再根据 10/15/20 Ha 的 `Hpsi_time` 和平均 block 宽度选择
+FFTW threads 或外层 OpenMP。Rayleigh--Ritz 只有在 `subspace_time` 占比显著上升后才
+值得优先接入并行线性代数。
 
 ## 2. 单位和 Fourier 约定
 

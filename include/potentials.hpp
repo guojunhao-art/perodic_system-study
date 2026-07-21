@@ -80,6 +80,10 @@ Eigen::VectorXcd apply_nonlocal_projectors(
     const std::vector<NonlocalProjector>& projectors,
     const Eigen::VectorXcd& c);
 
+Eigen::MatrixXcd apply_nonlocal_projectors(
+    const std::vector<NonlocalProjector>& projectors,
+    const Eigen::MatrixXcd& C);
+
 double compute_nonlocal_energy(
     const std::vector<NonlocalProjector>& projectors,
     const Eigen::MatrixXcd& C,

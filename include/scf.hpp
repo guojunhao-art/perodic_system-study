@@ -76,6 +76,7 @@ struct SCFResult {
 
     /* Aggregate eigensolver work over all SCF iterations. */
     long long eigensolver_hamiltonian_applications = 0;
+    long long eigensolver_hamiltonian_block_calls = 0;
     long long eigensolver_iterations = 0;
     long long eigensolver_restarts = 0;
     double eigensolver_hamiltonian_seconds = 0.0;

@@ -112,3 +112,7 @@ add_test(NAME point_ion_ewald COMMAND test_ewald)
 add_executable(test_davidson tests/test_davidson.cpp)
 target_link_libraries(test_davidson PRIVATE pw_dft_core)
 add_test(NAME davidson_incremental_hpsi COMMAND test_davidson)
+
+add_executable(test_batched_hamiltonian tests/test_batched_hamiltonian.cpp)
+target_link_libraries(test_batched_hamiltonian PRIVATE pw_dft_core)
+add_test(NAME batched_hamiltonian COMMAND test_batched_hamiltonian)

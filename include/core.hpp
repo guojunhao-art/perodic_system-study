@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <map>
 #include <stdexcept>
 #include <vector>
 
@@ -181,6 +182,11 @@ public:
 
 class FFTWorkspace {
 public:
+    struct BatchPlans {
+        fftw_plan backward = nullptr;
+        fftw_plan forward = nullptr;
+    };
+
     FFTGrid grid;
 
     std::vector<std::complex<double>> reciprocal_grid;
@@ -189,6 +195,17 @@ public:
 
     fftw_plan backward_plan = nullptr;
     fftw_plan forward_plan = nullptr;
+
+    /*
+     * Batched transforms share one pair of buffers.  Plans are cached by
+     * transform count because fftw_plan_many_dft fixes `howmany` when the
+     * plan is created.  If the buffers need to grow, all cached plans are
+     * destroyed before reallocation so they never retain stale pointers.
+     */
+    std::vector<std::complex<double>> batch_reciprocal_grid;
+    std::vector<std::complex<double>> batch_real_grid;
+    int batch_capacity = 0;
+    std::map<int, BatchPlans> batch_plan_cache;
 
     explicit FFTWorkspace(const FFTGrid& grid_in)
         : grid(grid_in),
@@ -218,6 +235,7 @@ public:
     }
 
     ~FFTWorkspace() {
+        destroy_batch_plans();
         if (backward_plan) {
             fftw_destroy_plan(backward_plan);
         }
@@ -228,6 +246,97 @@ public:
 
     FFTWorkspace(const FFTWorkspace&) = delete;
     FFTWorkspace& operator=(const FFTWorkspace&) = delete;
+
+    const BatchPlans& ensure_batch_plans(int transform_count) {
+        if (transform_count <= 0) {
+            throw std::runtime_error(
+                "Batched FFT transform count must be positive."
+            );
+        }
+
+        if (transform_count > batch_capacity) {
+            destroy_batch_plans();
+            batch_capacity = transform_count;
+            const std::size_t buffer_size =
+                static_cast<std::size_t>(batch_capacity)
+                * static_cast<std::size_t>(grid.ngrid);
+            batch_reciprocal_grid.assign(
+                buffer_size,
+                std::complex<double>(0.0, 0.0)
+            );
+            batch_real_grid.assign(
+                buffer_size,
+                std::complex<double>(0.0, 0.0)
+            );
+        }
+
+        const auto found = batch_plan_cache.find(transform_count);
+        if (found != batch_plan_cache.end()) {
+            return found->second;
+        }
+
+        int dimensions[3] = {grid.n1, grid.n2, grid.n3};
+        BatchPlans plans;
+        plans.backward = fftw_plan_many_dft(
+            3,
+            dimensions,
+            transform_count,
+            reinterpret_cast<fftw_complex*>(batch_reciprocal_grid.data()),
+            nullptr,
+            1,
+            grid.ngrid,
+            reinterpret_cast<fftw_complex*>(batch_real_grid.data()),
+            nullptr,
+            1,
+            grid.ngrid,
+            FFTW_BACKWARD,
+            FFTW_ESTIMATE
+        );
+        plans.forward = fftw_plan_many_dft(
+            3,
+            dimensions,
+            transform_count,
+            reinterpret_cast<fftw_complex*>(batch_real_grid.data()),
+            nullptr,
+            1,
+            grid.ngrid,
+            reinterpret_cast<fftw_complex*>(batch_reciprocal_grid.data()),
+            nullptr,
+            1,
+            grid.ngrid,
+            FFTW_FORWARD,
+            FFTW_ESTIMATE
+        );
+
+        if (!plans.backward || !plans.forward) {
+            if (plans.backward) {
+                fftw_destroy_plan(plans.backward);
+            }
+            if (plans.forward) {
+                fftw_destroy_plan(plans.forward);
+            }
+            throw std::runtime_error("Failed to create batched FFTW plans.");
+        }
+
+        const auto inserted = batch_plan_cache.emplace(
+            transform_count,
+            plans
+        );
+        return inserted.first->second;
+    }
+
+private:
+    void destroy_batch_plans() {
+        for (auto& entry : batch_plan_cache) {
+            if (entry.second.backward) {
+                fftw_destroy_plan(entry.second.backward);
+            }
+            if (entry.second.forward) {
+                fftw_destroy_plan(entry.second.forward);
+            }
+        }
+        batch_plan_cache.clear();
+    }
 };
 
 struct NonlocalProjector {

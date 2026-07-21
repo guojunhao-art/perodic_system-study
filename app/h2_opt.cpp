@@ -27,6 +27,8 @@ struct H2Point {
     double ion_force_hartree_per_bohr = 0.0;
     int scf_iterations = 0;
     long long hamiltonian_applications = 0;
+    long long hamiltonian_block_calls = 0;
+    double hamiltonian_seconds = 0.0;
     double scf_wall_time_seconds = 0.0;
     double density_residual = 0.0;
     SCFInitialGuess next_guess;
@@ -152,6 +154,10 @@ H2Point evaluate_h2_point(
     result.scf_iterations = scf.iterations;
     result.hamiltonian_applications =
         scf.eigensolver_hamiltonian_applications;
+    result.hamiltonian_block_calls =
+        scf.eigensolver_hamiltonian_block_calls;
+    result.hamiltonian_seconds =
+        scf.eigensolver_hamiltonian_seconds;
     result.scf_wall_time_seconds = scf.wall_time_seconds;
     result.density_residual = scf.final_density_residual;
     result.next_guess.density = scf.density;
@@ -171,7 +177,10 @@ void print_point(int step, const H2Point& point) {
               << point.bond_force_hartree_per_bohr
               << "  " << std::setw(4) << point.scf_iterations
               << "  " << std::setw(7) << point.hamiltonian_applications
+              << "  " << std::setw(7) << point.hamiltonian_block_calls
               << "  " << std::fixed << std::setprecision(2)
+              << std::setw(8) << point.hamiltonian_seconds
+              << "  "
               << std::setw(8) << point.scf_wall_time_seconds
               << "  " << std::scientific << std::setprecision(3)
               << std::setw(11) << point.density_residual
@@ -319,7 +328,7 @@ int main(int argc, char** argv) {
             << "plane waves: " << basis.size() << "\n\n"
             << "step      R/Bohr        R/Angstrom"
             << "             E/Ha        F_R/HaBohr  NELM  N_Hpsi"
-            << "    time/s         drho\n";
+            << "  N_Hblk  Hpsi/s   SCF/s         drho\n";
 
         int step = 0;
         H2Point lower = evaluate_h2_point(

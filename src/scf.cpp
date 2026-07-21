@@ -162,6 +162,8 @@ void print_compact_summary(
         << "\n"
         << "  eigensolver work: N_Hpsi = "
         << result.eigensolver_hamiltonian_applications
+        << "  N_Hblock = "
+        << result.eigensolver_hamiltonian_block_calls
         << "  N_iter = " << result.eigensolver_iterations
         << "  restarts = " << result.eigensolver_restarts
         << "  Hpsi_time = " << std::fixed << std::setprecision(3)
@@ -285,6 +287,8 @@ SCFResult run_scf(
 
         result.eigensolver_hamiltonian_applications +=
             ks.hamiltonian_applications;
+        result.eigensolver_hamiltonian_block_calls +=
+            ks.hamiltonian_block_calls;
         result.eigensolver_iterations += ks.iterations;
         result.eigensolver_restarts += ks.subspace_restarts;
         result.eigensolver_hamiltonian_seconds +=

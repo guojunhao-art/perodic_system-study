@@ -1,0 +1,9 @@
+Negative volume parser test
+-8.0
+1.0 0.0 0.0
+0.0 1.0 0.0
+0.0 0.0 1.0
+H
+1
+Direct
+0.0 0.0 0.0

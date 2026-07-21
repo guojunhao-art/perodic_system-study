@@ -1,0 +1,24 @@
+calculation = scf
+structure = POSCAR_direct_selective
+pseudo = Si minimal_sp_nc.upf
+pseudo = H minimal_local_nc.upf
+xc = pz_lda
+kpoints = gamma
+
+ecut_ha = 10.0
+fft_grid = 24 26 28
+ewald_width_bohr = 0.75
+nelect = auto
+nbands = 9
+occupations = fermi_dirac
+smearing_ev = 0.10
+
+scf_max_iterations = 123
+density_tolerance = 2.0e-8
+energy_tolerance_ha = 3.0e-10
+eigensolver_max_iterations = 77
+eigensolver_tolerance_ha = 4.0e-10
+mixing_alpha = 0.14
+pulay_max_history = 7
+pulay_min_history = 3
+verbosity = detailed

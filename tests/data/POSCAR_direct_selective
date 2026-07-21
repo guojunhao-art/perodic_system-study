@@ -1,0 +1,11 @@
+Si H direct/selective parser test
+1.0
+1.0 0.0 0.0
+0.0 2.0 0.0
+0.0 0.0 3.0
+Si H
+1 1
+Selective dynamics
+Direct
+0.10 0.20 0.30 T F T
+0.80 0.70 0.60 F F F

@@ -1,0 +1,9 @@
+Cartesian scale parser test
+2.0
+1.0 0.0 0.0
+0.2 1.0 0.0
+0.1 0.3 1.0
+H
+1
+Cartesian
+0.425 0.725 0.750

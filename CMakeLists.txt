@@ -28,7 +28,9 @@ if (NOT TARGET PkgConfig::LIBXC)
 endif()
 
 add_library(pw_dft_core
+    src/calculation.cpp
     src/hamiltonian.cpp
+    src/input.cpp
     src/scf_modules.cpp
     src/scf.cpp
     src/eigensolver.cpp
@@ -62,6 +64,9 @@ endif()
 add_executable(fft app/main.cpp)
 target_link_libraries(fft PRIVATE pw_dft_core)
 
+add_executable(pwdft app/pwdft.cpp)
+target_link_libraries(pwdft PRIVATE pw_dft_core)
+
 add_executable(upf_info app/upf_info.cpp)
 target_link_libraries(upf_info PRIVATE pw_dft_core)
 
@@ -91,6 +96,14 @@ target_compile_definitions(
     PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
 )
 add_test(NAME nc_upf_reader COMMAND test_upf_reader)
+
+add_executable(test_input tests/test_input.cpp)
+target_link_libraries(test_input PRIVATE pw_dft_core)
+target_compile_definitions(
+    test_input
+    PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+)
+add_test(NAME poscar_and_calculation_input COMMAND test_input)
 
 add_executable(test_xc_functional tests/test_xc_functional.cpp)
 target_link_libraries(test_xc_functional PRIVATE pw_dft_core)

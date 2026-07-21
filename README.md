@@ -21,6 +21,7 @@ Hartree 原子单位。代码保留了许多生产级程序会封装起来的中
 - Gaussian-split point-ion Ewald 能量和解析力；
 - 无 projector H UPF 的 H₂ 一维键长优化驱动；
 - 真实 Si UPF 的非对称 Si₂ 分项/全 SCF 力验证驱动；
+- POSCAR 结构解析、独立计算参数文件和通用 Gamma 点单点驱动；
 - `upf_info` 文件及局域势检查工具。
 
 默认的 `fft` 驱动已经不再构造 toy potential，而是直接从一个 NC-UPF 文件读取
@@ -89,11 +90,62 @@ Gaussian 宽度（Bohr）构造局域势，打印短程尾部和若干 $G$ 点�
 
 第一个参数现在是必需的；代码不再从命令行接收 toy Gaussian 势参数。只给 UPF
 时，优先采用文件中的 `wfc_cutoff`（从 Ry 换算为 Ha）；旧赝势若没有有效的建议值，
-默认使用 10 Ha。当前驱动仍是“立方晶胞中心放一个原子”的高对称验证程序，还不是
-通用结构文件解析器。驱动当前固定使用 LibXC PZ-LDA，因此会主动拒绝泛函标签中
-不含 `PZ` 的赝势，避免电子泛函与生成赝势所用泛函静默混用。
+默认使用 10 Ha。旧 `fft` 驱动仍是“立方晶胞中心放一个原子”的高对称验证程序；
+新的 `pwdft` 是通用结构入口。两个驱动当前固定使用 LibXC PZ-LDA，因此会主动拒绝
+泛函标签中不含 `PZ` 的赝势，避免电子泛函与生成赝势所用泛函静默混用。
 
-### 1.2 H₂ 局域 UPF 键长优化
+### 1.2 POSCAR 与通用单点输入
+
+`pwdft` 将结构和数值参数分成两个文件。POSCAR 负责晶胞、元素、坐标及可选的
+`Selective dynamics` 标记；`key = value` 计算文件负责赝势映射、cutoff、FFT 网格、
+占据和收敛参数：
+
+```bash
+make pwdft
+./pwdft examples/si_scf.in
+```
+
+示例 [`examples/POSCAR_Si`](examples/POSCAR_Si) 与
+[`examples/si_scf.in`](examples/si_scf.in) 对应旧命令：
+
+```bash
+./fft pseudopotentials/Si.pz-vbc.UPF 10.0 12.0 36 0.05
+```
+
+因而可直接比较两条路径的能量、力、SCF 迭代数和 `N_Hpsi`。配置文件中的相对路径
+以配置文件所在目录为基准，而不是以启动程序时的工作目录为基准。多元素体系为每种
+元素重复一行 `pseudo`：
+
+```text
+structure = POSCAR
+pseudo = Si pseudopotentials/Si.pz-vbc.UPF
+pseudo = H  pseudopotentials/H.pz-vbc.UPF
+ecut_ha = 10.0
+fft_grid = 48 48 48
+kpoints = gamma
+```
+
+POSCAR 按标准 VASP 单位解释：晶格和 Cartesian 坐标为 Å，读入后自动转换为 Bohr；
+`Direct` 坐标不做长度转换。当前支持一个正缩放因子、负的目标体积缩放、VASP 5
+元素行、`Direct/Cartesian` 和 `Selective dynamics`。三分量各向异性缩放和缺少
+元素行的 VASP 4 格式会明确报错。选择性移动标记现在会被保存在结构对象中，供后续
+几何优化使用，但单点 SCF 不使用它们。
+
+输入层已经定义 `KPointSet`，但本分支只接受：
+
+```text
+kpoints = gamma
+```
+
+非 Gamma 或多 k 点不会被静默当成 Gamma，而是直接拒绝；下一阶段会扩展这一数据
+结构。解析器回归可单独运行：
+
+```bash
+make test_input
+./test_input
+```
+
+### 1.3 H₂ 局域 UPF 键长优化
 
 `H.pz-vbc.UPF` 没有非局域 projector，因此可以在实现 `PP_BETA` 前作为真实
 局域赝势的端到端测试：
@@ -118,7 +170,7 @@ mkdir -p tmp
 pw.x -in examples/h2_qe.in > h2_qe.out
 ```
 
-### 1.3 Si₂ 真实 UPF 力验证
+### 1.4 Si₂ 真实 UPF 力验证
 
 单原子高对称零力不能检查力的整体符号、projector 平移相位或离子编号。
 `si2_force_check` 因此使用一个键轴不与笛卡尔方向重合的非对称 Si₂ 构型，依次验证：
@@ -153,7 +205,7 @@ $10^{-2}$、$5\times10^{-3}$ 和 $2\times10^{-3}$ Bohr；最后一个命令行�
 有限电子温度下必须差分 `TOTEN`，不能差分 `energy without entropy` 或
 `energy(sigma->0)`。程序以非零退出码报告任何一项失败。
 
-### 1.4 Davidson 性能诊断
+### 1.5 Davidson 性能诊断
 
 高 cutoff 下，基组规模近似按
 
@@ -224,7 +276,7 @@ make test_davidson
 ./test_davidson
 ```
 
-### 1.5 批量 Hamiltonian 与 FFT
+### 1.6 批量 Hamiltonian 与 FFT
 
 `apply_hamiltonian_to_block` 不再逐列调用标量 $H\psi$。对一个含 $m$ 个轨道的 block，
 平面波系数被布置成 $m$ 个连续的三维 reciprocal grids，然后由

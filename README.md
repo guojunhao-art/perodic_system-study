@@ -7,7 +7,7 @@ Hartree 原子单位。代码保留了许多生产级程序会封装起来的中
 
 当前实现包括：
 
-- Bloch 多 k 点平面波基组和 FFT-based $H\psi$；
+- Bloch 多 k 点平面波基组、FFT-based $H\psi$ 和可选的 k 点级 MPI 并行；
 - Gamma-centered、Monkhorst–Pack 和显式带权 k 点输入；
 - 所有 k 点共享化学势的零温/Fermi–Dirac 占据及带权密度、能量和力；
 - LibXC 非自旋极化 LDA exchange + Perdew–Zunger correlation SCF；
@@ -56,6 +56,28 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
+
+MPI 是可选依赖。安装 OpenMPI 后，可以让不同进程负责不同 k 点：
+
+```bash
+sudo apt install openmpi-bin libopenmpi-dev
+
+# CMake：保留独立的 MPI 构建目录
+cmake -S . -B build-mpi -DCMAKE_BUILD_TYPE=Release -DPWDFT_ENABLE_MPI=ON
+cmake --build build-mpi -j
+ctest --test-dir build-mpi --output-on-failure
+mpiexec -n 8 build-mpi/pwdft examples/si_kpoints_scf.in
+
+# Makefile：生成独立的 pwdft_mpi，不覆盖串行程序
+make -j pwdft_mpi
+mpiexec -n 8 ./pwdft_mpi examples/si_kpoints_scf.in
+make test-mpi
+```
+
+k 点采用循环分配：rank $r$ 处理 $r,r+N_{\mathrm{rank}},\ldots$。每轮 SCF
+只全局汇总本征值、带权密度、动能和非局域能；轨道矩阵始终留在所属 rank，最终
+非局域力也先局部计算再求和。有效进程数不超过 k 点数；Gamma-only 计算不会从
+这一层并行中获得加速。未启用 MPI 时，同一套代码自动退化为原来的单进程路径。
 
 ### 1.1 下载并检查 NC-UPF
 

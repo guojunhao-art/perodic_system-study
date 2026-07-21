@@ -1,4 +1,5 @@
 #include "input.hpp"
+#include "parallel.hpp"
 #include "scf.hpp"
 #include "scf_modules.hpp"
 
@@ -148,6 +149,60 @@ void test_two_kpoint_scf() {
     if (result.kpoints.size() != 2) {
         throw std::runtime_error("SCF did not preserve both k-point states.");
     }
+
+    const double shifted_kinetic =
+        std::pow(std::acos(-1.0), 2) / 512.0;
+    require_close(
+        result.energy.kinetic,
+        shifted_kinetic,
+        1.0e-11,
+        "MPI-reduced kinetic energy"
+    );
+    require_close(
+        result.kpoints[1].eigenvalues[0]
+            - result.kpoints[0].eigenvalues[0],
+        shifted_kinetic,
+        1.0e-11,
+        "MPI-gathered eigenvalue separation"
+    );
+    const double uniform_density = options.nelec / lattice.volume();
+    double maximum_density_error = 0.0;
+    for (double density : result.density) {
+        maximum_density_error = std::max(
+            maximum_density_error,
+            std::abs(density - uniform_density)
+        );
+    }
+    require_close(
+        maximum_density_error,
+        0.0,
+        1.0e-11,
+        "MPI-reduced uniform density"
+    );
+
+    const parallel::KPointDistribution distribution(2);
+    int local_ownership_failures = 0;
+    int local_orbital_blocks = 0;
+    for (int ik = 0; ik < 2; ++ik) {
+        const bool owns_orbitals = result.kpoints[ik].orbitals.size() != 0;
+        if (result.kpoints[ik].owner_rank != distribution.owner(ik) ||
+            owns_orbitals != distribution.owns(ik)) {
+            ++local_ownership_failures;
+        }
+        if (owns_orbitals) {
+            ++local_orbital_blocks;
+        }
+    }
+    if (parallel::sum(local_ownership_failures) != 0) {
+        throw std::runtime_error(
+            "MPI k-point orbital ownership is inconsistent."
+        );
+    }
+    if (parallel::sum(local_orbital_blocks) != 2) {
+        throw std::runtime_error(
+            "Each k-point orbital block must exist on exactly one rank."
+        );
+    }
 }
 
 void test_gamma_wrapper_equivalence() {
@@ -217,16 +272,29 @@ void test_gamma_wrapper_equivalence() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
-        test_shifted_basis();
-        test_global_occupations();
-        test_gamma_wrapper_equivalence();
-        test_two_kpoint_scf();
-        std::cout << "Multi-k-point tests passed.\n";
-        return 0;
+        parallel::Environment environment(argc, argv);
+        try {
+            test_shifted_basis();
+            test_global_occupations();
+            test_gamma_wrapper_equivalence();
+            test_two_kpoint_scf();
+            if (parallel::is_root()) {
+                std::cout << "Multi-k-point tests passed with "
+                    << parallel::size() << " MPI rank(s).\n";
+            }
+            return 0;
+        } catch (const std::exception& error) {
+            if (parallel::is_root()) {
+                std::cerr << "Multi-k-point test failed: "
+                    << error.what() << "\n";
+            }
+            return 1;
+        }
     } catch (const std::exception& error) {
-        std::cerr << "Multi-k-point test failed: " << error.what() << "\n";
+        std::cerr << "MPI initialization failed in multi-k-point test: "
+            << error.what() << "\n";
         return 1;
     }
 }

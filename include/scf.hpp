@@ -101,7 +101,9 @@ struct KPointHamiltonian {
 struct KPointElectronicState {
     Eigen::Vector3d fractional_position = Eigen::Vector3d::Zero();
     double weight = 1.0;
+    int owner_rank = 0;
     Eigen::VectorXd eigenvalues;
+    /* Stored only on owner_rank in an MPI calculation. */
     Eigen::MatrixXcd orbitals;
     std::vector<double> occupations;
 };
@@ -155,7 +157,9 @@ SCFResult run_scf(
 /*
  * Solve all k-point Hamiltonians in one SCF cycle. The k points share the
  * same density, effective potential, and global chemical potential. Their
- * weights must be positive and normalized to one.
+ * weights must be positive and normalized to one. In an active MPI run,
+ * each rank stores orbitals only for its assigned k points; eigenvalues,
+ * occupations, density, and energies are available on every rank.
  */
 KPointSCFResult run_kpoint_scf(
     const Lattice& lattice,

@@ -2,6 +2,7 @@
 
 #include "eigensolver.hpp"
 #include "mixing.hpp"
+#include "parallel.hpp"
 #include "potentials.hpp"
 
 #include <algorithm>
@@ -11,6 +12,7 @@
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -101,11 +103,14 @@ void validate_inputs(
     }
 }
 
-void print_header(std::ostream& out, int nkpoints) {
+void print_header(std::ostream& out, int nkpoints, int process_count) {
     out << "\n"
         << "------------------------- k-point electronic minimization "
         << "-------------------------\n"
-        << "  NKPTS = " << nkpoints << "\n"
+        << "  NKPTS = " << nkpoints
+        << "    MPI ranks = " << process_count
+        << "    active k-point ranks = "
+        << std::min(nkpoints, process_count) << "\n"
         << "          N                     E              dE"
         << "        rms(rho)  Niter  N_Hpsi      rms(eig)\n";
 }
@@ -162,11 +167,18 @@ void print_summary(
         << result.eigensolver_hamiltonian_block_calls
         << "  N_iter = " << result.eigensolver_iterations
         << "  restarts = " << result.eigensolver_restarts
-        << "  Hpsi_time = " << std::fixed << std::setprecision(3)
+        << "  Hpsi_time"
+        << (parallel::size() > 1 ? "(rank-sum)" : "")
+        << " = " << std::fixed << std::setprecision(3)
         << result.eigensolver_hamiltonian_seconds << " s"
-        << "  subspace_time = "
+        << "  subspace_time"
+        << (parallel::size() > 1 ? "(rank-sum)" : "")
+        << " = "
         << result.eigensolver_subspace_seconds << " s\n"
-        << "  SCF wall time = " << result.wall_time_seconds << " s\n";
+        << "  SCF wall time"
+        << (parallel::size() > 1 ? "(max-rank)" : "")
+        << " = "
+        << result.wall_time_seconds << " s\n";
     out.flags(flags);
     out.precision(precision);
 }
@@ -185,6 +197,9 @@ KPointSCFResult run_kpoint_scf(
 
     const auto scf_start = std::chrono::steady_clock::now();
     validate_inputs(kpoints, fft, ionic_potential, options, initial_guess);
+    const parallel::KPointDistribution distribution(
+        static_cast<int>(kpoints.size())
+    );
 
     const double volume = lattice.volume();
     const double dV = volume / static_cast<double>(fft.grid.ngrid);
@@ -196,7 +211,7 @@ KPointSCFResult run_kpoint_scf(
     }
 
     std::vector<Eigen::MatrixXcd> orbital_guesses(kpoints.size());
-    for (int ik = 0; ik < static_cast<int>(kpoints.size()); ++ik) {
+    for (int ik : distribution.local_kpoints()) {
         if (!initial_guess.orbitals.empty() &&
             initial_guess.orbitals[ik].size() != 0) {
             orbital_guesses[ik] = initial_guess.orbitals[ik];
@@ -216,14 +231,24 @@ KPointSCFResult run_kpoint_scf(
     pulay.min_history = options.pulay_min_history;
     pulay.regularization = options.pulay_regularization;
     LibXCLDAFunctional xc(options.lda_functional);
+    std::vector<double> weights;
+    weights.reserve(kpoints.size());
+    for (const KPointHamiltonian& point : kpoints) {
+        weights.push_back(point.weight);
+    }
 
     KPointSCFResult result;
     double previous_energy = 0.0;
     double last_signed_energy_change = 0.0;
     const bool logging_enabled =
-        log_stream != nullptr && options.verbosity != SCFVerbosity::Silent;
+        parallel::is_root() && log_stream != nullptr
+        && options.verbosity != SCFVerbosity::Silent;
     if (logging_enabled) {
-        print_header(*log_stream, static_cast<int>(kpoints.size()));
+        print_header(
+            *log_stream,
+            static_cast<int>(kpoints.size()),
+            distribution.size()
+        );
     }
 
     for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
@@ -233,69 +258,142 @@ KPointSCFResult run_kpoint_scf(
             ionic_potential, hartree_input, xc_input.Vxc
         );
 
-        std::vector<DavidsonResult> solutions;
-        solutions.reserve(kpoints.size());
-        std::vector<Eigen::VectorXd> eigenvalues;
-        eigenvalues.reserve(kpoints.size());
-        std::vector<double> weights;
-        weights.reserve(kpoints.size());
-        int iteration_eigensolver_steps = 0;
-        int iteration_hamiltonian_applications = 0;
-        double iteration_maximum_residual = 0.0;
+        std::vector<DavidsonResult> solutions(kpoints.size());
+        int local_eigensolver_steps = 0;
+        int local_hamiltonian_applications = 0;
+        int local_hamiltonian_block_calls = 0;
+        int local_eigensolver_restarts = 0;
+        double local_hamiltonian_seconds = 0.0;
+        double local_subspace_seconds = 0.0;
+        double local_maximum_residual = 0.0;
+        std::string local_eigensolver_error;
 
-        for (int ik = 0; ik < static_cast<int>(kpoints.size()); ++ik) {
-            const KPointHamiltonian& point = kpoints[ik];
-            const int maximum_subspace = options.eigensolver_max_subspace > 0
-                ? std::min(options.eigensolver_max_subspace, point.basis.size())
-                : std::min(point.basis.size(), 4 * options.nbands + 8);
-            const std::vector<NonlocalProjector>* projector_pointer =
-                point.projectors.empty() ? nullptr : &point.projectors;
-            DavidsonResult solution = davidson_lowest_eigenstates(
-                point.basis,
-                fft,
-                effective_potential,
-                options.nbands,
-                orbital_guesses[ik],
-                options.eigensolver_max_iterations,
-                maximum_subspace,
-                options.eigensolver_tolerance,
-                options.eigensolver_denom_floor,
-                projector_pointer,
-                logging_enabled && options.verbosity == SCFVerbosity::Detailed
-            );
-            const double residual = maximum_residual(solution.residual_norms);
-            if (!solution.converged) {
-                std::ostringstream message;
-                message << "Davidson eigensolver did not converge at k point "
-                    << ik << " (" << point.fractional_position.transpose()
-                    << "): max residual = " << residual
-                    << ", requested tolerance = "
-                    << options.eigensolver_tolerance
-                    << ", worst band = " << solution.max_residual_band
-                    << ", subspace = " << solution.final_subspace_size
-                    << ", Hpsi applications = "
-                    << solution.hamiltonian_applications;
-                throw std::runtime_error(message.str());
+        try {
+            for (int ik : distribution.local_kpoints()) {
+                const KPointHamiltonian& point = kpoints[ik];
+                const int maximum_subspace =
+                    options.eigensolver_max_subspace > 0
+                    ? std::min(
+                        options.eigensolver_max_subspace,
+                        point.basis.size()
+                    )
+                    : std::min(
+                        point.basis.size(), 4 * options.nbands + 8
+                    );
+                const std::vector<NonlocalProjector>* projector_pointer =
+                    point.projectors.empty() ? nullptr : &point.projectors;
+                DavidsonResult solution = davidson_lowest_eigenstates(
+                    point.basis,
+                    fft,
+                    effective_potential,
+                    options.nbands,
+                    orbital_guesses[ik],
+                    options.eigensolver_max_iterations,
+                    maximum_subspace,
+                    options.eigensolver_tolerance,
+                    options.eigensolver_denom_floor,
+                    projector_pointer,
+                    logging_enabled
+                        && distribution.size() == 1
+                        && options.verbosity == SCFVerbosity::Detailed
+                );
+                const double residual = maximum_residual(
+                    solution.residual_norms
+                );
+                if (!solution.converged) {
+                    std::ostringstream message;
+                    message
+                        << "Davidson eigensolver did not converge at k point "
+                        << ik << " ("
+                        << point.fractional_position.transpose()
+                        << "): max residual = " << residual
+                        << ", requested tolerance = "
+                        << options.eigensolver_tolerance
+                        << ", worst band = "
+                        << solution.max_residual_band
+                        << ", subspace = "
+                        << solution.final_subspace_size
+                        << ", Hpsi applications = "
+                        << solution.hamiltonian_applications;
+                    throw std::runtime_error(message.str());
+                }
+
+                local_eigensolver_steps += solution.iterations;
+                local_hamiltonian_applications +=
+                    solution.hamiltonian_applications;
+                local_hamiltonian_block_calls +=
+                    solution.hamiltonian_block_calls;
+                local_eigensolver_restarts += solution.subspace_restarts;
+                local_hamiltonian_seconds += solution.hamiltonian_seconds;
+                local_subspace_seconds +=
+                    solution.subspace_diagonalization_seconds;
+                local_maximum_residual = std::max(
+                    local_maximum_residual, residual
+                );
+                solutions[ik] = std::move(solution);
             }
+        } catch (const std::exception& error) {
+            std::ostringstream message;
+            message << "k-point solve failed on MPI rank "
+                << distribution.rank() << ": " << error.what();
+            local_eigensolver_error = message.str();
+        } catch (...) {
+            local_eigensolver_error =
+                "k-point solve failed with an unknown exception on MPI rank "
+                + std::to_string(distribution.rank()) + ".";
+        }
+        const std::string eigensolver_error =
+            parallel::first_error(local_eigensolver_error);
+        if (!eigensolver_error.empty()) {
+            throw std::runtime_error(eigensolver_error);
+        }
 
-            result.eigensolver_hamiltonian_applications +=
-                solution.hamiltonian_applications;
-            result.eigensolver_hamiltonian_block_calls +=
-                solution.hamiltonian_block_calls;
-            result.eigensolver_iterations += solution.iterations;
-            result.eigensolver_restarts += solution.subspace_restarts;
-            result.eigensolver_hamiltonian_seconds += solution.hamiltonian_seconds;
-            result.eigensolver_subspace_seconds +=
-                solution.subspace_diagonalization_seconds;
-            iteration_eigensolver_steps += solution.iterations;
-            iteration_hamiltonian_applications +=
-                solution.hamiltonian_applications;
-            iteration_maximum_residual = std::max(
-                iteration_maximum_residual, residual
-            );
-            eigenvalues.push_back(solution.eigenvalues);
-            weights.push_back(point.weight);
-            solutions.push_back(std::move(solution));
+        const int iteration_eigensolver_steps =
+            parallel::sum(local_eigensolver_steps);
+        const int iteration_hamiltonian_applications =
+            parallel::sum(local_hamiltonian_applications);
+        const int iteration_hamiltonian_block_calls =
+            parallel::sum(local_hamiltonian_block_calls);
+        const int iteration_eigensolver_restarts =
+            parallel::sum(local_eigensolver_restarts);
+        const double iteration_hamiltonian_seconds =
+            parallel::sum(local_hamiltonian_seconds);
+        const double iteration_subspace_seconds =
+            parallel::sum(local_subspace_seconds);
+        const double iteration_maximum_residual =
+            parallel::maximum(local_maximum_residual);
+
+        result.eigensolver_hamiltonian_applications +=
+            iteration_hamiltonian_applications;
+        result.eigensolver_hamiltonian_block_calls +=
+            iteration_hamiltonian_block_calls;
+        result.eigensolver_iterations += iteration_eigensolver_steps;
+        result.eigensolver_restarts += iteration_eigensolver_restarts;
+        result.eigensolver_hamiltonian_seconds +=
+            iteration_hamiltonian_seconds;
+        result.eigensolver_subspace_seconds += iteration_subspace_seconds;
+
+        std::vector<double> packed_eigenvalues(
+            kpoints.size() * static_cast<std::size_t>(options.nbands),
+            0.0
+        );
+        for (int ik : distribution.local_kpoints()) {
+            for (int ib = 0; ib < options.nbands; ++ib) {
+                packed_eigenvalues[
+                    static_cast<std::size_t>(ik) * options.nbands + ib
+                ] = solutions[ik].eigenvalues[ib];
+            }
+        }
+        parallel::sum_in_place(packed_eigenvalues);
+
+        std::vector<Eigen::VectorXd> eigenvalues(kpoints.size());
+        for (int ik = 0; ik < static_cast<int>(kpoints.size()); ++ik) {
+            eigenvalues[ik].resize(options.nbands);
+            for (int ib = 0; ib < options.nbands; ++ib) {
+                eigenvalues[ik][ib] = packed_eigenvalues[
+                    static_cast<std::size_t>(ik) * options.nbands + ib
+                ];
+            }
         }
 
         const KPointOccupationResult occupations =
@@ -310,42 +408,72 @@ KPointSCFResult run_kpoint_scf(
             );
 
         std::vector<double> density_output(fft.grid.ngrid, 0.0);
-        double kinetic_energy = 0.0;
-        double nonlocal_energy = 0.0;
-        std::vector<KPointElectronicState> electronic_states;
-        electronic_states.reserve(kpoints.size());
+        double local_kinetic_energy = 0.0;
+        double local_nonlocal_energy = 0.0;
+        std::vector<KPointElectronicState> electronic_states(kpoints.size());
         for (int ik = 0; ik < static_cast<int>(kpoints.size()); ++ik) {
             const KPointHamiltonian& point = kpoints[ik];
-            const Eigen::MatrixXcd orbitals =
-                solutions[ik].eigenvectors.leftCols(options.nbands);
-            const auto density_at_k = build_density_from_orbitals(
-                point.basis,
-                fft,
-                orbitals,
-                occupations.occupations[ik],
-                volume
-            );
-            for (int grid_index = 0;
-                 grid_index < fft.grid.ngrid;
-                 ++grid_index) {
-                density_output[grid_index] +=
-                    point.weight * density_at_k[grid_index];
-            }
-            kinetic_energy += point.weight * compute_kinetic_energy(
-                point.basis, orbitals, occupations.occupations[ik]
-            );
-            nonlocal_energy += point.weight * compute_nonlocal_energy(
-                point.projectors, orbitals, occupations.occupations[ik]
-            );
-
-            KPointElectronicState state;
+            KPointElectronicState& state = electronic_states[ik];
             state.fractional_position = point.fractional_position;
             state.weight = point.weight;
-            state.eigenvalues = solutions[ik].eigenvalues;
-            state.orbitals = orbitals;
+            state.owner_rank = distribution.owner(ik);
+            state.eigenvalues = eigenvalues[ik];
             state.occupations = occupations.occupations[ik];
-            electronic_states.push_back(std::move(state));
         }
+
+        std::string local_density_error;
+        try {
+            for (int ik : distribution.local_kpoints()) {
+                const KPointHamiltonian& point = kpoints[ik];
+                Eigen::MatrixXcd orbitals =
+                    solutions[ik].eigenvectors.leftCols(options.nbands);
+                const auto density_at_k = build_density_from_orbitals(
+                    point.basis,
+                    fft,
+                    orbitals,
+                    occupations.occupations[ik],
+                    volume
+                );
+                for (int grid_index = 0;
+                     grid_index < fft.grid.ngrid;
+                     ++grid_index) {
+                    density_output[grid_index] +=
+                        point.weight * density_at_k[grid_index];
+                }
+                local_kinetic_energy +=
+                    point.weight * compute_kinetic_energy(
+                        point.basis,
+                        orbitals,
+                        occupations.occupations[ik]
+                    );
+                local_nonlocal_energy +=
+                    point.weight * compute_nonlocal_energy(
+                        point.projectors,
+                        orbitals,
+                        occupations.occupations[ik]
+                    );
+                electronic_states[ik].orbitals = std::move(orbitals);
+            }
+        } catch (const std::exception& error) {
+            std::ostringstream message;
+            message << "k-point density/energy assembly failed on MPI rank "
+                << distribution.rank() << ": " << error.what();
+            local_density_error = message.str();
+        } catch (...) {
+            local_density_error =
+                "k-point density/energy assembly failed with an unknown "
+                "exception on MPI rank "
+                + std::to_string(distribution.rank()) + ".";
+        }
+        const std::string density_error =
+            parallel::first_error(local_density_error);
+        if (!density_error.empty()) {
+            throw std::runtime_error(density_error);
+        }
+
+        parallel::sum_in_place(density_output);
+        const double kinetic_energy = parallel::sum(local_kinetic_energy);
+        const double nonlocal_energy = parallel::sum(local_nonlocal_energy);
 
         const auto hartree_output = build_hartree_potential(
             lattice, fft, density_output
@@ -453,14 +581,15 @@ KPointSCFResult run_kpoint_scf(
         }
 
         previous_energy = energy_for_convergence;
-        for (int ik = 0; ik < static_cast<int>(kpoints.size()); ++ik) {
+        for (int ik : distribution.local_kpoints()) {
             orbital_guesses[ik] = result.kpoints[ik].orbitals;
         }
     }
 
-    result.wall_time_seconds = std::chrono::duration<double>(
+    const double local_wall_time = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - scf_start
     ).count();
+    result.wall_time_seconds = parallel::maximum(local_wall_time);
     if (logging_enabled) {
         print_summary(*log_stream, result, last_signed_energy_change);
     }

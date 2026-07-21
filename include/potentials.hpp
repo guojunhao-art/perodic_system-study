@@ -13,7 +13,7 @@ struct Ion {
 
     /*
      * Valence charge.
-     * For a one-pseudo-atom toy system, choose Z = nelec.
+     * For a one-pseudo-atom analytic test system, choose Z = nelec.
      */
     double Z = 1.0;
 
@@ -25,7 +25,7 @@ struct Ion {
     double short_amp = 0.0;
     double short_rc = 0.5;
     
-    // Toy separable nonlocal projectors.
+    // Analytic separable projectors used by finite-difference regression tests.
     double beta_s_rc = 0.5;
     double beta_s_D = 0.0;
     double beta_p_rc = 0.5;

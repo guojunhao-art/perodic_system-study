@@ -4,7 +4,7 @@
 #include <vector>
 
 /*
- * UPF uses atomic Rydberg units, while the toy DFT code uses Hartree atomic
+ * UPF uses atomic Rydberg units, while the PWDFT code uses Hartree atomic
  * units internally. Lengths are Bohr in both conventions.
  */
 constexpr double RYDBERG_TO_HARTREE = 0.5;

@@ -1,0 +1,9 @@
+calculation = scf
+structure = POSCAR_direct_selective
+pseudo = Si minimal_sp_nc.upf
+pseudo = H minimal_local_nc.upf
+kpoints = explicit
+kpoint = 0.0 0.0 0.0 1
+kpoint = 0.5 0.0 0.0 3
+ecut_ha = 8.0
+fft_grid = 20 20 20

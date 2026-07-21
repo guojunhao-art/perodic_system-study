@@ -39,10 +39,11 @@ std::vector<double> qe_real_spherical_harmonics(
 /*
  * Build plane-wave matrix elements
  *
- *   <G|beta_Iilm> = (-i)^l / sqrt(Omega)
- *                    Y_lm(Ghat) beta_il(G) exp(-i G.R_I),
+ *   <G+k|beta_Iilm> = (-i)^l / sqrt(Omega)
+ *                    Y_lm(qhat) beta_il(q) exp(-i q.R_I),
  *
- * where beta_il(G) = 4 pi int r j_l(Gr) [r beta_il(r)] dr.
+ * where q = G+k and
+ * beta_il(q) = 4 pi int r j_l(qr) [r beta_il(r)] dr.
  *
  * Each same-l PP_DIJ block is diagonalized exactly. The resulting eigen-
  * projectors have scalar D values and can therefore use the existing Hpsi,

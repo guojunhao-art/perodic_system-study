@@ -5,6 +5,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -193,6 +194,85 @@ void require_positive(double value, const std::string& name) {
 
 } // namespace
 
+KPointSet make_uniform_kpoint_mesh(
+    const std::array<int, 3>& mesh,
+    bool gamma_centered) {
+
+    long long point_count_wide = 1;
+    for (int direction = 0; direction < 3; ++direction) {
+        if (mesh[direction] <= 0) {
+            throw std::runtime_error(
+                "K-point mesh dimensions must be positive."
+            );
+        }
+        point_count_wide *= mesh[direction];
+        if (point_count_wide > std::numeric_limits<int>::max()) {
+            throw std::runtime_error("K-point mesh is too large.");
+        }
+    }
+    const int point_count = static_cast<int>(point_count_wide);
+
+    KPointSet result;
+    result.points.clear();
+    result.points.reserve(point_count);
+    result.description = gamma_centered
+        ? "Gamma-centered"
+        : "Monkhorst-Pack";
+
+    auto coordinate = [gamma_centered](int index, int count) {
+        if (!gamma_centered) {
+            return (2.0 * static_cast<double>(index) + 1.0
+                    - static_cast<double>(count))
+                / (2.0 * static_cast<double>(count));
+        }
+        double value = static_cast<double>(index)
+            / static_cast<double>(count);
+        if (value >= 0.5) {
+            value -= 1.0;
+        }
+        return value;
+    };
+
+    const double weight = 1.0 / static_cast<double>(point_count);
+    for (int i = 0; i < mesh[0]; ++i) {
+        for (int j = 0; j < mesh[1]; ++j) {
+            for (int k = 0; k < mesh[2]; ++k) {
+                KPoint point;
+                point.frac_position = Eigen::Vector3d(
+                    coordinate(i, mesh[0]),
+                    coordinate(j, mesh[1]),
+                    coordinate(k, mesh[2])
+                );
+                point.weight = weight;
+                result.points.push_back(point);
+            }
+        }
+    }
+    return result;
+}
+
+void normalize_kpoint_weights(KPointSet& kpoints) {
+    if (kpoints.points.empty()) {
+        throw std::runtime_error("At least one k point is required.");
+    }
+    double weight_sum = 0.0;
+    for (const KPoint& point : kpoints.points) {
+        if (!point.frac_position.allFinite()) {
+            throw std::runtime_error("K-point coordinates must be finite.");
+        }
+        if (!std::isfinite(point.weight) || point.weight <= 0.0) {
+            throw std::runtime_error("K-point weights must be positive and finite.");
+        }
+        weight_sum += point.weight;
+    }
+    if (!std::isfinite(weight_sum) || weight_sum <= 0.0) {
+        throw std::runtime_error("K-point weight sum is invalid.");
+    }
+    for (KPoint& point : kpoints.points) {
+        point.weight /= weight_sum;
+    }
+}
+
 AtomicStructure read_poscar(const std::string& path) {
     std::ifstream input(path);
     if (!input) {
@@ -371,6 +451,7 @@ CalculationConfig read_calculation_config(const std::string& path) {
         resolve_relative_path(base_directory, "POSCAR").string();
     config.scf.occupation_mode = OccupationMode::DegeneracyAwareZeroT;
     config.scf.smearing_sigma = 0.0;
+    bool explicit_kpoints = false;
 
     std::string line;
     int line_number = 0;
@@ -505,12 +586,64 @@ CalculationConfig read_calculation_config(const std::string& path) {
         } else if (key == "band_print_interval") {
             config.scf.band_print_interval = parse_integer(value, key);
         } else if (key == "kpoints") {
-            if (lowercase(value) != "gamma") {
+            const auto fields = tokens(lowercase(value));
+            if (fields.size() == 1 && fields[0] == "gamma") {
+                config.kpoints = KPointSet{};
+                explicit_kpoints = false;
+            } else if (fields.size() == 1 && fields[0] == "explicit") {
+                config.kpoints.points.clear();
+                config.kpoints.description = "Explicit";
+                explicit_kpoints = true;
+            } else if (fields.size() == 4) {
+                const bool gamma_centered =
+                    fields[0] == "gamma"
+                    || fields[0] == "gamma_centered";
+                const bool monkhorst_pack =
+                    fields[0] == "monkhorst_pack"
+                    || fields[0] == "mp";
+                if (!gamma_centered && !monkhorst_pack) {
+                    throw std::runtime_error(
+                        "kpoints mesh must be gamma, gamma_centered, "
+                        "monkhorst_pack, or mp."
+                    );
+                }
+                std::array<int, 3> mesh;
+                for (int direction = 0; direction < 3; ++direction) {
+                    mesh[direction] = parse_integer(
+                        fields[direction + 1], "kpoints"
+                    );
+                }
+                config.kpoints = make_uniform_kpoint_mesh(
+                    mesh, gamma_centered
+                );
+                explicit_kpoints = false;
+            } else {
                 throw std::runtime_error(
-                    "Only kpoints = gamma is implemented in this branch."
+                    "kpoints requires gamma, explicit, or a scheme followed "
+                    "by three mesh dimensions."
                 );
             }
-            config.kpoints.points = {{}};
+        } else if (key == "kpoint") {
+            if (!explicit_kpoints) {
+                throw std::runtime_error(
+                    "kpoint lines require an earlier kpoints = explicit line."
+                );
+            }
+            const auto fields = tokens(value);
+            if (fields.size() != 4) {
+                throw std::runtime_error(
+                    "kpoint requires three reciprocal fractional coordinates "
+                    "and one positive weight."
+                );
+            }
+            KPoint point;
+            for (int direction = 0; direction < 3; ++direction) {
+                point.frac_position[direction] = parse_double(
+                    fields[direction], "kpoint"
+                );
+            }
+            point.weight = parse_double(fields[3], "kpoint weight");
+            config.kpoints.points.push_back(point);
         } else if (key == "xc") {
             std::string functional = lowercase(value);
             std::replace(functional.begin(), functional.end(), '-', '_');
@@ -613,5 +746,6 @@ CalculationConfig read_calculation_config(const std::string& path) {
             }
         }
     }
+    normalize_kpoint_weights(config.kpoints);
     return config;
 }

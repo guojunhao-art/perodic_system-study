@@ -58,17 +58,6 @@ void require_fft_grid_for_basis_products(
     }
 }
 
-void validate_gamma_only(const KPointSet& kpoints) {
-    if (kpoints.points.size() != 1 ||
-        kpoints.points.front().frac_position.norm() > 1.0e-14 ||
-        std::abs(kpoints.points.front().weight - 1.0) > 1.0e-14) {
-        throw std::runtime_error(
-            "The current single-point implementation accepts only one "
-            "Gamma point with unit weight."
-        );
-    }
-}
-
 double maximum_force_component(
     const std::vector<Eigen::Vector3d>& forces) {
 
@@ -93,8 +82,6 @@ SinglePointResult run_single_point(
         std::abs(structure.lattice_bohr.determinant()) < 1.0e-14) {
         throw std::runtime_error("The structure lattice is invalid.");
     }
-    validate_gamma_only(config.kpoints);
-
     const Lattice lattice(
         structure.lattice_bohr.col(0),
         structure.lattice_bohr.col(1),
@@ -147,9 +134,6 @@ SinglePointResult run_single_point(
         : (recommended_cutoff_hartree > 0.0
             ? recommended_cutoff_hartree
             : 10.0);
-    PlaneWaveBasis3D basis;
-    basis.generate(lattice, Eigen::Vector3d::Zero(), ecut_hartree);
-    require_fft_grid_for_basis_products(basis, grid);
     FFTWorkspace fft(grid);
 
     std::vector<UPFLocalSpecies> local_species;
@@ -201,11 +185,6 @@ SinglePointResult run_single_point(
             static_cast<int>(std::ceil(0.5 * options.nelec)) + 4
         );
     }
-    if (options.nbands > basis.size()) {
-        throw std::runtime_error(
-            "The plane-wave basis has fewer vectors than requested bands."
-        );
-    }
     if (options.occupation_mode == OccupationMode::Fixed &&
         static_cast<int>(options.fixed_occupations.size()) != options.nbands) {
         throw std::runtime_error(
@@ -224,38 +203,99 @@ SinglePointResult run_single_point(
         }
     }
 
+    std::vector<KPointHamiltonian> kpoint_hamiltonians;
+    kpoint_hamiltonians.reserve(config.kpoints.points.size());
+    int minimum_plane_wave_count = 0;
+    int maximum_plane_wave_count = 0;
+    int expanded_projector_count = 0;
+    for (int ik = 0;
+         ik < static_cast<int>(config.kpoints.points.size());
+         ++ik) {
+        const KPoint& input_point = config.kpoints.points[ik];
+        KPointHamiltonian point;
+        point.fractional_position = input_point.frac_position;
+        point.weight = input_point.weight;
+        const Eigen::Vector3d k_cart =
+            lattice.B * input_point.frac_position;
+        point.basis.generate(lattice, k_cart, ecut_hartree);
+        require_fft_grid_for_basis_products(point.basis, grid);
+        if (point.basis.size() < options.nbands) {
+            throw std::runtime_error(
+                "The plane-wave basis at k point " + std::to_string(ik)
+                + " has fewer vectors than requested bands."
+            );
+        }
+        if (ik == 0) {
+            minimum_plane_wave_count = point.basis.size();
+            maximum_plane_wave_count = point.basis.size();
+        } else {
+            minimum_plane_wave_count = std::min(
+                minimum_plane_wave_count, point.basis.size()
+            );
+            maximum_plane_wave_count = std::max(
+                maximum_plane_wave_count, point.basis.size()
+            );
+        }
+        kpoint_hamiltonians.push_back(std::move(point));
+    }
+
     if (log_stream) {
         *log_stream
             << "\n"
-            << " PWDFT: POSCAR Gamma-point NC-UPF calculation\n"
+            << " PWDFT: POSCAR multi-k-point NC-UPF calculation\n"
             << " -------------------------------------------------------------------------------\n"
             << "  SYSTEM = " << structure.comment << "\n"
             << "  NIONS  = " << structure.atoms.size()
             << "    NTYPES = " << structure.species_order.size()
             << "    VOLUME = " << lattice.volume() << " Bohr^3\n"
-            << "  NPLWV  = " << basis.size()
+            << "  NPLWV(min/max) = " << minimum_plane_wave_count
+            << "/" << maximum_plane_wave_count
             << "    NGX = " << grid.n1
             << "    NGY = " << grid.n2
             << "    NGZ = " << grid.n3 << "\n"
             << "  NELECT = " << options.nelec
             << "    NBANDS = " << options.nbands
             << "    ENCUT = " << ecut_hartree << " Ha\n"
-            << "  KPOINTS = Gamma"
+            << "  KPOINTS = " << config.kpoints.description
+            << "    NKPTS = " << config.kpoints.points.size()
             << "    NPROJ(radial) = " << radial_projector_count << "\n"
             << "  EDIFF  = " << options.energy_tolerance
             << "    EDIFFRHO = " << options.density_tolerance << "\n"
             << "  XC     = " << lda_functional_name(options.lda_functional)
             << "    LibXC " << libxc_runtime_version() << "\n"
-            << std::flush;
+            << "\n  k-point list (reciprocal fractional coordinates):\n";
+        for (int ik = 0;
+             ik < static_cast<int>(kpoint_hamiltonians.size());
+             ++ik) {
+            const KPointHamiltonian& point = kpoint_hamiltonians[ik];
+            *log_stream << "    " << std::setw(4) << ik
+                << "  " << std::fixed << std::setprecision(8)
+                << std::setw(12) << point.fractional_position[0]
+                << std::setw(12) << point.fractional_position[1]
+                << std::setw(12) << point.fractional_position[2]
+                << "  weight = " << std::setw(12) << point.weight
+                << "  NPLWV = " << point.basis.size() << "\n";
+        }
+        *log_stream << std::flush;
+    }
+
+    for (int ik = 0;
+         ik < static_cast<int>(kpoint_hamiltonians.size());
+         ++ik) {
+        KPointHamiltonian& point = kpoint_hamiltonians[ik];
+        point.projectors = build_upf_nonlocal_projectors(
+            lattice, point.basis, nonlocal_species, upf_ions
+        );
+        if (ik == 0) {
+            expanded_projector_count = static_cast<int>(
+                point.projectors.size()
+            );
+        }
     }
 
     const std::vector<double> local_potential =
         build_upf_local_potential_real(
             lattice, fft, local_species, upf_ions
-        );
-    const std::vector<NonlocalProjector> projectors =
-        build_upf_nonlocal_projectors(
-            lattice, basis, nonlocal_species, upf_ions
         );
     const EwaldEnergyComponents ewald =
         compute_point_ion_ion_ewald_energy(
@@ -265,13 +305,12 @@ SinglePointResult run_single_point(
             config.ewald_width_bohr
         );
 
-    SCFResult scf = run_scf(
+    KPointSCFResult scf = run_kpoint_scf(
         lattice,
-        basis,
+        kpoint_hamiltonians,
         fft,
         local_potential,
         ewald.total,
-        projectors,
         options,
         {},
         log_stream
@@ -288,13 +327,26 @@ SinglePointResult run_single_point(
         ewald_ions,
         config.ewald_width_bohr
     );
-    forces.nonlocal = compute_nonlocal_ionic_forces(
-        basis,
-        projectors,
-        scf.orbitals,
-        scf.occupations.occ,
-        static_cast<int>(structure.atoms.size())
+    forces.nonlocal.assign(
+        structure.atoms.size(), Eigen::Vector3d::Zero()
     );
+    for (int ik = 0;
+         ik < static_cast<int>(kpoint_hamiltonians.size());
+         ++ik) {
+        const auto force_at_k = compute_nonlocal_ionic_forces(
+            kpoint_hamiltonians[ik].basis,
+            kpoint_hamiltonians[ik].projectors,
+            scf.kpoints[ik].orbitals,
+            scf.kpoints[ik].occupations,
+            static_cast<int>(structure.atoms.size())
+        );
+        for (int iatom = 0;
+             iatom < static_cast<int>(structure.atoms.size());
+             ++iatom) {
+            forces.nonlocal[iatom] +=
+                kpoint_hamiltonians[ik].weight * force_at_k[iatom];
+        }
+    }
     forces.total.resize(structure.atoms.size(), Eigen::Vector3d::Zero());
     for (int iatom = 0;
          iatom < static_cast<int>(structure.atoms.size());
@@ -308,9 +360,9 @@ SinglePointResult run_single_point(
     SinglePointResult result;
     result.converged = scf.converged;
     result.ecut_hartree = ecut_hartree;
-    result.plane_wave_count = basis.size();
+    result.plane_wave_count = maximum_plane_wave_count;
     result.radial_projector_count = radial_projector_count;
-    result.expanded_projector_count = static_cast<int>(projectors.size());
+    result.expanded_projector_count = expanded_projector_count;
     result.ion_ion_energy = ewald.total;
     result.total_valence_charge = automatic_nelect;
     result.options_used = options;

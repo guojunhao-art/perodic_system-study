@@ -108,11 +108,13 @@ struct FFTGrid {
 struct GVector {
     Eigen::Vector3i n;
     Eigen::Vector3d G_cart;
+    Eigen::Vector3d q_cart;
     double kinetic;
 };
 
 class PlaneWaveBasis3D {
 public:
+    Eigen::Vector3d k_cart = Eigen::Vector3d::Zero();
     std::vector<GVector> gvectors;
 
     void generate(const Lattice& lattice,
@@ -123,6 +125,7 @@ public:
         }
 
         gvectors.clear();
+        this->k_cart = k_cart;
 
         const double pmax = std::sqrt(2.0 * ecut);
         const double qmax = pmax + k_cart.norm();
@@ -149,7 +152,7 @@ public:
                     const double kinetic = 0.5 * q.squaredNorm();
 
                     if (kinetic <= ecut + tol) {
-                        gvectors.push_back({n, G, kinetic});
+                        gvectors.push_back({n, G, q, kinetic});
                     }
                 }
             }
@@ -345,8 +348,8 @@ struct NonlocalProjector {
 
     /*
      * Index of the ion carrying this projector.  The translational
-     * derivative d beta(G) / d R_I = -i G beta(G) contributes only to
-     * this ion's force.
+     * derivative d beta(G+k) / d R_I = -i (G+k) beta(G+k) contributes
+     * only to this ion's force.
      */
     int ion_index = -1;
 };

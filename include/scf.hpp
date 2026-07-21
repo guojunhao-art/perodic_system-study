@@ -91,6 +91,49 @@ struct SCFResult {
     double variational_energy = 0.0;
 };
 
+struct KPointHamiltonian {
+    Eigen::Vector3d fractional_position = Eigen::Vector3d::Zero();
+    double weight = 1.0;
+    PlaneWaveBasis3D basis;
+    std::vector<NonlocalProjector> projectors;
+};
+
+struct KPointElectronicState {
+    Eigen::Vector3d fractional_position = Eigen::Vector3d::Zero();
+    double weight = 1.0;
+    Eigen::VectorXd eigenvalues;
+    Eigen::MatrixXcd orbitals;
+    std::vector<double> occupations;
+};
+
+struct KPointSCFInitialGuess {
+    std::vector<double> density;
+    std::vector<Eigen::MatrixXcd> orbitals;
+};
+
+struct KPointSCFResult {
+    bool converged = false;
+    int iterations = 0;
+    double final_density_residual = 0.0;
+    double final_energy_change = 0.0;
+
+    std::vector<KPointElectronicState> kpoints;
+    KPointOccupationResult occupations;
+    std::vector<double> density;
+    EnergyTerms energy;
+    double electron_number_from_density = 0.0;
+
+    long long eigensolver_hamiltonian_applications = 0;
+    long long eigensolver_hamiltonian_block_calls = 0;
+    long long eigensolver_iterations = 0;
+    long long eigensolver_restarts = 0;
+    double eigensolver_hamiltonian_seconds = 0.0;
+    double eigensolver_subspace_seconds = 0.0;
+    double wall_time_seconds = 0.0;
+
+    double variational_energy = 0.0;
+};
+
 /*
  * Solve the electronic SCF problem for a fixed ionic configuration.
  *
@@ -107,4 +150,19 @@ SCFResult run_scf(
     const std::vector<NonlocalProjector>& projectors,
     const SCFOptions& options,
     const SCFInitialGuess& initial_guess = {},
+    std::ostream* log_stream = nullptr);
+
+/*
+ * Solve all k-point Hamiltonians in one SCF cycle. The k points share the
+ * same density, effective potential, and global chemical potential. Their
+ * weights must be positive and normalized to one.
+ */
+KPointSCFResult run_kpoint_scf(
+    const Lattice& lattice,
+    const std::vector<KPointHamiltonian>& kpoints,
+    FFTWorkspace& fft,
+    const std::vector<double>& ionic_potential,
+    double ion_ion_energy,
+    const SCFOptions& options,
+    const KPointSCFInitialGuess& initial_guess = {},
     std::ostream* log_stream = nullptr);

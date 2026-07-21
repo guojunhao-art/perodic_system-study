@@ -376,13 +376,13 @@ std::vector<NonlocalProjector> build_gaussian_nonlocal_projectors(
             proj.ion_index = iion;
 
             for (int ig = 0; ig < basis.size(); ++ig) {
-                const Eigen::Vector3d G =
-                    basis.gvectors[ig].G_cart;
+                const Eigen::Vector3d q =
+                    basis.gvectors[ig].q_cart;
 
-                const double G2 = G.squaredNorm();
+                const double q2 = q.squaredNorm();
 
                 const double phase =
-                    -G.dot(R);
+                    -q.dot(R);
 
                 const std::complex<double> exp_phase(
                     std::cos(phase),
@@ -391,7 +391,7 @@ std::vector<NonlocalProjector> build_gaussian_nonlocal_projectors(
 
                 const double smooth =
                     std::exp(
-                        -0.5 * ion.beta_s_rc * ion.beta_s_rc * G2
+                        -0.5 * ion.beta_s_rc * ion.beta_s_rc * q2
                     );
 
                 proj.beta_G[ig] =
@@ -405,7 +405,7 @@ std::vector<NonlocalProjector> build_gaussian_nonlocal_projectors(
         /*
          * 2. p-like Gaussian projectors: px, py, pz
          *
-         * beta_px(G) ~ i Gx exp(-0.5 rc^2 G^2) exp(-i G.R)
+         * beta_px(G+k) ~ i qx exp(-0.5 rc^2 q^2) exp(-i q.R)
          */
         if (std::abs(ion.beta_p_D) > 1.0e-14) {
             if (ion.beta_p_rc <= 0.0) {
@@ -419,13 +419,13 @@ std::vector<NonlocalProjector> build_gaussian_nonlocal_projectors(
                 proj.ion_index = iion;
 
                 for (int ig = 0; ig < basis.size(); ++ig) {
-                    const Eigen::Vector3d G =
-                        basis.gvectors[ig].G_cart;
+                    const Eigen::Vector3d q =
+                        basis.gvectors[ig].q_cart;
 
-                    const double G2 = G.squaredNorm();
+                    const double q2 = q.squaredNorm();
 
                     const double phase =
-                        -G.dot(R);
+                        -q.dot(R);
 
                     const std::complex<double> exp_phase(
                         std::cos(phase),
@@ -434,13 +434,13 @@ std::vector<NonlocalProjector> build_gaussian_nonlocal_projectors(
 
                     const double smooth =
                         std::exp(
-                            -0.5 * ion.beta_p_rc * ion.beta_p_rc * G2
+                            -0.5 * ion.beta_p_rc * ion.beta_p_rc * q2
                         );
 
                     const std::complex<double> imag_unit(0.0, 1.0);
 
                     proj.beta_G[ig] =
-                        imag_unit * G[idir] * smooth * exp_phase;
+                        imag_unit * q[idir] * smooth * exp_phase;
                 }
 
                 normalize_projector(proj);

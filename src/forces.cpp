@@ -276,7 +276,7 @@ std::vector<Eigen::Vector3d> compute_nonlocal_ionic_forces(
                 for (int ig = 0; ig < basis.size(); ++ig) {
                     d_beta_d_R[ig] =
                         minus_i
-                        * basis.gvectors[ig].G_cart[a]
+                        * basis.gvectors[ig].q_cart[a]
                         * proj.beta_G[ig];
                 }
 
@@ -284,7 +284,7 @@ std::vector<Eigen::Vector3d> compute_nonlocal_ionic_forces(
                     d_beta_d_R.dot(C.col(ib));
 
                 /*
-                 * E_NL = sum_n f_n D |<beta|psi_n>|^2.
+                 * E_NL = sum_n f_n D |<beta|psi_nk>|^2.
                  * The force is minus its explicit R derivative.
                  */
                 forces[proj.ion_index][a] +=

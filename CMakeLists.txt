@@ -31,6 +31,7 @@ add_library(pw_dft_core
     src/calculation.cpp
     src/hamiltonian.cpp
     src/input.cpp
+    src/kpoint_scf.cpp
     src/scf_modules.cpp
     src/scf.cpp
     src/eigensolver.cpp
@@ -61,10 +62,7 @@ else()
     target_link_libraries(pw_dft_core PUBLIC LibXC::LibXC)
 endif()
 
-add_executable(fft app/main.cpp)
-target_link_libraries(fft PRIVATE pw_dft_core)
-
-add_executable(pwdft app/pwdft.cpp)
+add_executable(pwdft app/main.cpp)
 target_link_libraries(pwdft PRIVATE pw_dft_core)
 
 add_executable(upf_info app/upf_info.cpp)
@@ -104,6 +102,10 @@ target_compile_definitions(
     PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
 )
 add_test(NAME poscar_and_calculation_input COMMAND test_input)
+
+add_executable(test_kpoints tests/test_kpoints.cpp)
+target_link_libraries(test_kpoints PRIVATE pw_dft_core)
+add_test(NAME multi_kpoint_scf COMMAND test_kpoints)
 
 add_executable(test_xc_functional tests/test_xc_functional.cpp)
 target_link_libraries(test_xc_functional PRIVATE pw_dft_core)

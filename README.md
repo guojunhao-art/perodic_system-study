@@ -1,13 +1,15 @@
-# 周期平面波 DFT toy code
+# 周期平面波 DFT 学习程序
 
 这是一个以“看清公式如何落到代码”为目标的周期平面波 Kohn–Sham DFT
-教学程序。当前只使用 Gamma 点、无自旋轨道、非自旋极化轨道，并使用
+教学程序。当前支持完整均匀多 k 点网格、无自旋轨道和非自旋极化计算，并使用
 Hartree 原子单位。代码保留了许多生产级程序会封装起来的中间量，方便逐项
 检查能量、Hamiltonian、占据数和 Hellmann–Feynman 力。
 
 当前实现包括：
 
-- Gamma-point 平面波基组和 FFT-based $H\psi$；
+- Bloch 多 k 点平面波基组和 FFT-based $H\psi$；
+- Gamma-centered、Monkhorst–Pack 和显式带权 k 点输入；
+- 所有 k 点共享化学势的零温/Fermi–Dirac 占据及带权密度、能量和力；
 - LibXC 非自旋极化 LDA exchange + Perdew–Zunger correlation SCF；
 - fixed、简并感知零温和 Fermi–Dirac 占据；
 - 线性/自适应辅助函数和 Pulay density mixing；
@@ -21,12 +23,13 @@ Hartree 原子单位。代码保留了许多生产级程序会封装起来的中
 - Gaussian-split point-ion Ewald 能量和解析力；
 - 无 projector H UPF 的 H₂ 一维键长优化驱动；
 - 真实 Si UPF 的非对称 Si₂ 分项/全 SCF 力验证驱动；
-- POSCAR 结构解析、独立计算参数文件和通用 Gamma 点单点驱动；
+- POSCAR 结构解析、独立计算参数文件和通用多 k 点单点驱动；
 - `upf_info` 文件及局域势检查工具。
 
-默认的 `fft` 驱动已经不再构造 toy potential，而是直接从一个 NC-UPF 文件读取
-局域势、projector、$D_{ij}$、价电子数和离子电荷。旧 Gaussian potential API
-暂时只保留给已有的解析单元测试使用。
+`pwdft` 是唯一的主 SCF 程序：它读取计算配置和 POSCAR，并从 NC-UPF 文件构造
+局域势、projector、$D_{ij}$、价电子数和离子电荷。早期硬编码单原子的 `fft`
+入口和未使用的 toy ionic potential 已删除。Gaussian 解析模型只保留在底层
+有限差分回归中，用来独立检查能量和力的符号与归一化。
 
 ## 1. 构建与运行
 
@@ -42,7 +45,7 @@ sudo apt install g++ make cmake pkg-config libeigen3-dev libfftw3-dev libxc-dev
 
 ```bash
 make -j
-./fft pseudopotentials/Si.pz-vbc.UPF 10.0 12.0 36 0.05
+./pwdft examples/si_scf.in
 make test
 ```
 
@@ -82,17 +85,10 @@ make upf_info
 `PP_DIJ`，并同时显示 Ry 与 Ha 单位的矩阵。给出第二个参数时，它还会用指定的
 Gaussian 宽度（Bohr）构造局域势，打印短程尾部和若干 $G$ 点的径向变换。
 
-主 SCF 驱动的命令行是
-
-```bash
-./fft PSEUDO.UPF [ECUT_HA] [CELL_BOHR] [FFT_N] [SMEARING_EV]
-```
-
-第一个参数现在是必需的；代码不再从命令行接收 toy Gaussian 势参数。只给 UPF
-时，优先采用文件中的 `wfc_cutoff`（从 Ry 换算为 Ha）；旧赝势若没有有效的建议值，
-默认使用 10 Ha。旧 `fft` 驱动仍是“立方晶胞中心放一个原子”的高对称验证程序；
-新的 `pwdft` 是通用结构入口。两个驱动当前固定使用 LibXC PZ-LDA，因此会主动拒绝
-泛函标签中不含 `PZ` 的赝势，避免电子泛函与生成赝势所用泛函静默混用。
+主程序优先采用输入文件中的 `ecut_ha`；若设为 `auto`，则读取所有 UPF 的
+`wfc_cutoff` 并取最大值（从 Ry 换算为 Ha），旧赝势没有有效建议值时默认使用
+10 Ha。当前固定使用 LibXC PZ-LDA，并主动拒绝泛函标签中不含 `PZ` 的赝势，避免
+电子泛函与生成赝势所用泛函静默混用。
 
 ### 1.2 POSCAR 与通用单点输入
 
@@ -103,18 +99,13 @@ Gaussian 宽度（Bohr）构造局域势，打印短程尾部和若干 $G$ 点�
 ```bash
 make pwdft
 ./pwdft examples/si_scf.in
+./pwdft examples/si_kpoints_scf.in
 ```
 
 示例 [`examples/POSCAR_Si`](examples/POSCAR_Si) 与
-[`examples/si_scf.in`](examples/si_scf.in) 对应旧命令：
-
-```bash
-./fft pseudopotentials/Si.pz-vbc.UPF 10.0 12.0 36 0.05
-```
-
-因而可直接比较两条路径的能量、力、SCF 迭代数和 `N_Hpsi`。配置文件中的相对路径
-以配置文件所在目录为基准，而不是以启动程序时的工作目录为基准。多元素体系为每种
-元素重复一行 `pseudo`：
+[`examples/si_scf.in`](examples/si_scf.in) 给出完整的 Gamma 点计算。配置文件中的
+相对路径以配置文件所在目录为基准，而不是以启动程序时的工作目录为基准。多元素
+体系为每种元素重复一行 `pseudo`：
 
 ```text
 structure = POSCAR
@@ -131,18 +122,36 @@ POSCAR 按标准 VASP 单位解释：晶格和 Cartesian 坐标为 Å，读入�
 元素行的 VASP 4 格式会明确报错。选择性移动标记现在会被保存在结构对象中，供后续
 几何优化使用，但单点 SCF 不使用它们。
 
-输入层已经定义 `KPointSet`，但本分支只接受：
+单 Gamma 点写作：
 
 ```text
 kpoints = gamma
 ```
 
-非 Gamma 或多 k 点不会被静默当成 Gamma，而是直接拒绝；下一阶段会扩展这一数据
-结构。解析器回归可单独运行：
+完整均匀网格可以选择 Gamma-centered 或标准 Monkhorst–Pack 位移：
+
+```text
+kpoints = gamma 4 4 4
+kpoints = monkhorst_pack 4 4 4
+```
+
+也可逐点给出倒格基矢下的分数坐标和正权重；程序会把权重统一归一化：
+
+```text
+kpoints = explicit
+kpoint = 0.0 0.0 0.0  1
+kpoint = 0.5 0.0 0.0  3
+```
+
+当前使用完整网格，不进行空间群或时间反演约化。因此均匀网格的每个点权重均为
+$1/N_k$；显式输入则保留用户给定的相对权重。所有 k 点共享同一个全局费米能级，
+不会分别填充电子。解析器和多 k 点回归可单独运行：
 
 ```bash
 make test_input
 ./test_input
+make test_kpoints
+./test_kpoints
 ```
 
 ### 1.3 H₂ 局域 UPF 键长优化
@@ -348,20 +357,20 @@ f(\mathbf r)=\sum_{\mathbf G}f(\mathbf G)
 e^{i\mathbf G\cdot\mathbf r}.
 $$
 
-平面波归一化为
+Bloch 轨道的周期部分采用平面波展开：
 
 $$
-\langle\mathbf r|\mathbf G\rangle
-=\frac{1}{\sqrt\Omega}e^{i\mathbf G\cdot\mathbf r},
+\psi_{n\mathbf k}(\mathbf r)
+=e^{i\mathbf k\cdot\mathbf r}u_{n\mathbf k}(\mathbf r),
 \qquad
-\psi_n(\mathbf r)=\frac{1}{\sqrt\Omega}
-\sum_{\mathbf G}c_{n\mathbf G}e^{i\mathbf G\cdot\mathbf r}.
+u_{n\mathbf k}(\mathbf r)=\frac{1}{\sqrt\Omega}
+\sum_{\mathbf G}c_{n\mathbf k}(\mathbf G)e^{i\mathbf G\cdot\mathbf r}.
 $$
 
-Gamma 点截断条件是
+每个 k 点分别按动能截断：
 
 $$
-\frac{|\mathbf G|^2}{2}\le E_{\mathrm{cut}}.
+\frac{|\mathbf G+\mathbf k|^2}{2}\le E_{\mathrm{cut}}.
 $$
 
 FFTW 的 forward transform 没有 $1/N$ 归一化，所以代码构造 Fourier 系数
@@ -372,27 +381,28 @@ FFTW 的 forward transform 没有 $1/N$ 归一化，所以代码构造 Fourier �
 当前单粒子方程为
 
 $$
-\hat H\psi_n
+\hat H\psi_{n\mathbf k}
 =\left[-\frac12\nabla^2+V_{\mathrm{loc}}(\mathbf r)
 +V_H(\mathbf r)+V_{\mathrm{xc}}(\mathbf r)
-+\hat V_{\mathrm{NL}}\right]\psi_n
-=\varepsilon_n\psi_n.
++\hat V_{\mathrm{NL}}\right]\psi_{n\mathbf k}
+=\varepsilon_{n\mathbf k}\psi_{n\mathbf k}.
 $$
 
 动能在倒空间是对角的：
 
 $$
-(T\psi_n)_{\mathbf G}=\frac{|\mathbf G|^2}{2}c_{n\mathbf G}.
+(Tu_{n\mathbf k})_{\mathbf G}
+=\frac{|\mathbf G+\mathbf k|^2}{2}c_{n\mathbf k}(\mathbf G).
 $$
 
 局域势部分通过
 
 $$
-c_{n\mathbf G}
-\xrightarrow{\mathrm{IFFT}}\psi_n(\mathbf r)
+c_{n\mathbf k}(\mathbf G)
+\xrightarrow{\mathrm{IFFT}}u_{n\mathbf k}(\mathbf r)
 \xrightarrow{\times V_{\mathrm{eff}}(\mathbf r)}
-V_{\mathrm{eff}}(\mathbf r)\psi_n(\mathbf r)
-\xrightarrow{\mathrm{FFT}}(V_{\mathrm{eff}}\psi_n)_{\mathbf G}
+V_{\mathrm{eff}}(\mathbf r)u_{n\mathbf k}(\mathbf r)
+\xrightarrow{\mathrm{FFT}}(V_{\mathrm{eff}}u_{n\mathbf k})_{\mathbf G}
 $$
 
 计算，因此不需要显式建立稠密矩阵
@@ -401,10 +411,22 @@ $V_{\mathbf G\mathbf G'}=V(\mathbf G-\mathbf G')$。
 电子数密度为
 
 $$
-n(\mathbf r)=\sum_n f_n|\psi_n(\mathbf r)|^2,
+n(\mathbf r)=\sum_{\mathbf k}w_{\mathbf k}\sum_n
+f_{n\mathbf k}|u_{n\mathbf k}(\mathbf r)|^2,
 \qquad
 \int_\Omega n(\mathbf r)\,d\mathbf r=N_e.
 $$
+
+这里 $w_{\mathbf k}>0$ 且 $\sum_{\mathbf k}w_{\mathbf k}=1$。零温和
+Fermi–Dirac 占据都通过同一个化学势满足
+
+$$
+N_e=\sum_{\mathbf k}w_{\mathbf k}\sum_n f_{n\mathbf k}.
+$$
+
+SCF 的每一步先在共同的 $V_{\mathrm{eff}}[n]$ 下依次求解所有 k 点，再汇总带权
+输出密度；因此 k 点之间只通过密度、势和全局化学势耦合，后续可以直接在 k 点层面
+并行。
 
 ## 4. Hartree 与 LibXC 交换-关联接口
 
@@ -578,7 +600,7 @@ V_{I,\mathrm{short}}(\mathbf G)
 e^{-r_{c,I}^2G^2/2}e^{-i\mathbf G\cdot\mathbf R_I}.
 $$
 
-原始 toy 模型使用的平滑离子 Coulomb 能是
+解析回归模型使用的平滑离子 Coulomb 能是
 
 $$
 E_{\mathrm{II}}^{\mathrm{smooth}}
@@ -597,7 +619,7 @@ E_{\mathrm{II}}^{\mathrm{point}}
 =E_{\mathrm{II}}^{\mathrm{smooth}}
 +\frac12\sum_{IJ\mathbf L}'
 \frac{Z_IZ_J}{r_{IJ\mathbf L}}
-\operatorname{erfc}\left(\frac{r_{IJ\mathbf L}}{2\sigma}\right)
+\mathrm{erfc}\left(\frac{r_{IJ\mathbf L}}{2\sigma}\right)
 -\sum_I\frac{Z_I^2}{2\sqrt\pi\sigma}
 -\frac{2\pi\sigma^2}{\Omega}\left(\sum_I Z_I\right)^2.
 $$
@@ -660,24 +682,25 @@ $$
 因此 projector 的径向变换应直接写成
 
 $$
-\widetilde\beta_l(G)=4\pi\int_0^\infty
-rj_l(Gr)u_{\beta,l}(r)\,dr,
+\widetilde\beta_l(q)=4\pi\int_0^\infty
+rj_l(qr)u_{\beta,l}(r)\,dr,
 $$
 
 避免在 $r\to0$ 时先除以 $r$。离散形式是
 
 $$
-\widetilde\beta_l(G)\simeq4\pi\sum_i
-r_i j_l(Gr_i)u_{\beta,l}(r_i)\,w_i.
+\widetilde\beta_l(q)\simeq4\pi\sum_i
+r_i j_l(qr_i)u_{\beta,l}(r_i)\,w_i.
 $$
 
 对于位于 $\mathbf R_I$ 的角动量 projector，平面波矩阵元还包含
 
 $$
-\langle\mathbf G|\beta_{I,lm}\rangle
-=\frac{4\pi}{\sqrt\Omega}(-i)^lY_{lm}(\widehat{\mathbf G})
-\left[\int r^2j_l(Gr)\beta_l(r)\,dr\right]
-e^{-i\mathbf G\cdot\mathbf R_I},
+\langle\mathbf G+\mathbf k|\beta_{I,lm}\rangle
+=\frac{4\pi}{\sqrt\Omega}(-i)^lY_{lm}(\widehat{\mathbf q})
+\left[\int r^2j_l(qr)\beta_l(r)\,dr\right]
+e^{-i\mathbf q\cdot\mathbf R_I},
+\qquad \mathbf q=\mathbf G+\mathbf k,
 $$
 
 具体相位需与所选复球谐或实球谐约定成套测试。
@@ -698,7 +721,7 @@ $$
 
 $$
 \phi_\sigma(r)
-=\frac{\operatorname{erf}[r/(\sqrt2\sigma)]}{r},
+=\frac{\mathrm{erf}[r/(\sqrt{2}\sigma)]}{r},
 \qquad
 \phi_\sigma(0)=\sqrt{\frac{2}{\pi}}\frac{1}{\sigma}.
 $$
@@ -717,7 +740,7 @@ $$
 一个数值困难的问题拆成了两个容易的问题：
 
 - 在原点，$\phi_\sigma(0)$ 有限，所以 $\Delta V_\sigma(r)$ 没有 $Z/r$ 奇点；
-- 在远处，$\operatorname{erf}[r/(\sqrt2\sigma)]\to1$，所以
+- 在远处，$\mathrm{erf}[r/(\sqrt{2}\sigma)]\to1$，所以
   $Z\phi_\sigma(r)$ 恰好抵消 $V_{\mathrm{loc}}^{\mathrm{Ha}}(r)\to-Z/r$
   的长程尾部，$\Delta V_\sigma$ 是短程函数；
 - Gaussian Coulomb 势的 Fourier 变换有解析式，长程部分不必在有限径向网格上
@@ -796,18 +819,19 @@ $$
 作用在轨道上为
 
 $$
-\hat V_{\mathrm{NL}}|\psi_n\rangle
+\hat V_{\mathrm{NL}}|\psi_{n\mathbf k}\rangle
 =\sum_I\sum_{ij}|\beta_i^I\rangle D_{ij}
-\langle\beta_j^I|\psi_n\rangle,
+\langle\beta_j^I|\psi_{n\mathbf k}\rangle,
 $$
 
 非局域能为
 
 $$
 E_{\mathrm{NL}}
-=\sum_n f_n\sum_I\sum_{ij}
-\langle\psi_n|\beta_i^I\rangle D_{ij}
-\langle\beta_j^I|\psi_n\rangle.
+=\sum_{\mathbf k}w_{\mathbf k}\sum_n f_{n\mathbf k}
+\sum_I\sum_{ij}
+\langle\psi_{n\mathbf k}|\beta_i^I\rangle D_{ij}
+\langle\beta_j^I|\psi_{n\mathbf k}\rangle.
 $$
 
 `PP_BETA` 与 `PP_DIJ` 的归一化是联合约定。若进行基变换
@@ -831,12 +855,13 @@ $$
 通道：
 
 $$
-B_{I,i,lm}(\mathbf G)
-=\langle\mathbf G|\beta^I_{i,lm}\rangle
+B_{I,i,lm}(\mathbf G+\mathbf k)
+=\langle\mathbf G+\mathbf k|\beta^I_{i,lm}\rangle
 =\frac{(-i)^l}{\sqrt\Omega}
-Y_{lm}^{\mathrm{real}}(\widehat{\mathbf G})
-\widetilde\beta_{i,l}(G)
-e^{-i\mathbf G\cdot\mathbf R_I}.
+Y_{lm}^{\mathrm{real}}(\widehat{\mathbf q})
+\widetilde\beta_{i,l}(q)
+e^{-i\mathbf q\cdot\mathbf R_I},
+\qquad \mathbf q=\mathbf G+\mathbf k.
 $$
 
 这里 $\widetilde\beta$ 已经由径向函数中的 $4\pi$ Fourier–Bessel 变换得到，
@@ -850,7 +875,7 @@ $$
 $z/r,-x/r,-y/r$。测试同时检查
 
 $$
-\sum_{m=1}^{2l+1}\left[Y_{lm}^{\mathrm{real}}(\widehat{\mathbf G})\right]^2
+\sum_{m=1}^{2l+1}\left[Y_{lm}^{\mathrm{real}}(\widehat{\mathbf q})\right]^2
 =\frac{2l+1}{4\pi}.
 $$
 
@@ -893,7 +918,7 @@ $$
 +\mathbf F_I^{\mathrm{II}}+\mathbf F_I^{\mathrm{NL}}.
 $$
 
-所有平移相关项都含有结构因子
+局域势和离子–离子项的周期结构因子含有晶格倒矢：
 
 $$
 e^{-i\mathbf G\cdot\mathbf R_I},
@@ -907,7 +932,8 @@ e^{-i\mathbf G\cdot\mathbf R_I}
 =-iG_a e^{-i\mathbf G\cdot\mathbf R_I}.
 $$
 
-这就是三类解析力中 $iG_a$ 因子的共同来源。
+非局域 projector 则含有 $\mathbf q=\mathbf G+\mathbf k$，所以其位置导数产生
+$-iq_a$。这一区别在 Gamma 点不可见，却是多 k 点解析力必须显式处理的部分。
 
 ### 10.1 局域电子–离子力
 
@@ -936,16 +962,16 @@ $$
 令
 
 $$
-b_{i,n}^I=\langle\beta_i^I|\psi_n\rangle.
+b_{i,n\mathbf k}^I=\langle\beta_i^I|\psi_{n\mathbf k}\rangle.
 $$
 
 对 Hermitian $D$，非局域力可写为
 
 $$
 F_{I,a}^{\mathrm{NL}}
-=-2\,\mathrm{Re}\sum_n f_n\sum_{ij}
-(b_{i,n}^I)^*D_{ij}
-\frac{\partial b_{j,n}^I}{\partial R_{I,a}}.
+=-2\,\mathrm{Re}\sum_{\mathbf k}w_{\mathbf k}\sum_n f_{n\mathbf k}
+\sum_{ij}(b_{i,n\mathbf k}^I)^*D_{ij}
+\frac{\partial b_{j,n\mathbf k}^I}{\partial R_{I,a}}.
 $$
 
 projector 的平移相位给出倒空间导数；符号还要和代码中
@@ -968,8 +994,8 @@ $$
 $\alpha$，有
 
 $$
-\frac{\partial B_{I,\alpha lm}(\mathbf G)}{\partial R_{I,a}}
-=-iG_aB_{I,\alpha lm}(\mathbf G),
+\frac{\partial B_{I,\alpha lm}(\mathbf G+\mathbf k)}{\partial R_{I,a}}
+=-iq_aB_{I,\alpha lm}(\mathbf G+\mathbf k),
 $$
 
 所以现有标量通道解析力逐项求和就与原稠密 $D_{ij}$ 公式完全等价。

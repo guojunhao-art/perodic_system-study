@@ -20,6 +20,7 @@ Hartree 原子单位。代码保留了许多生产级程序会封装起来的中
 - `PP_LOCAL` 的 Gaussian-screened Fourier–Bessel 变换、周期势和解析局域力；
 - Gaussian-split point-ion Ewald 能量和解析力；
 - 无 projector H UPF 的 H₂ 一维键长优化驱动；
+- 真实 Si UPF 的非对称 Si₂ 分项/全 SCF 力验证驱动；
 - `upf_info` 文件及局域势检查工具。
 
 默认的 `fft` 驱动已经不再构造 toy potential，而是直接从一个 NC-UPF 文件读取
@@ -117,7 +118,42 @@ mkdir -p tmp
 pw.x -in examples/h2_qe.in > h2_qe.out
 ```
 
-### 1.3 Davidson 性能诊断
+### 1.3 Si₂ 真实 UPF 力验证
+
+单原子高对称零力不能检查力的整体符号、projector 平移相位或离子编号。
+`si2_force_check` 因此使用一个键轴不与笛卡尔方向重合的非对称 Si₂ 构型，依次验证：
+
+1. 固定中心 SCF 密度，只移动局域势，比较解析 $F_{\mathrm{loc}}$ 与能量差分；
+2. 对 point-ion Ewald 能量做差分，比较 $F_{\mathrm{II}}$；
+3. 固定轨道和占据，只移动非局域 projector，比较 $F_{\mathrm{NL}}$；
+4. 对每个位移点重新收敛 SCF，用 Mermin 自由能 `TOTEN` 验证总力；
+5. 检查平移不变性要求的 $\max|\sum_I\mathbf F_I|$。
+
+```bash
+make si2_force_check
+./si2_force_check pseudopotentials/Si.pz-vbc.UPF
+
+# PSEUDO ECUT_HA CELL_BOHR FFT_N SMEARING_EV MIN_SCF_FD_STEP_BOHR
+./si2_force_check pseudopotentials/Si.pz-vbc.UPF 10.0 16.0 48 0.05 0.002
+```
+
+冻结态三项使用 $10^{-5}$ Bohr 的位移，不受 SCF 噪声限制。全 SCF 检查默认依次使用
+$10^{-2}$、$5\times10^{-3}$ 和 $2\times10^{-3}$ Bohr；最后一个命令行参数改变最小
+步长，另外两个步长相应取其 5 倍和 2.5 倍。程序检查两个原子的全部六个笛卡尔
+分量，因此默认需要中心点加 36 次位移 SCF。所有位移 SCF 都从同一个中心收敛态
+出发，避免 `+h` 和 `-h` 使用不同历史造成不对称误差。
+
+默认通过条件为：
+
+- frozen $F_{\mathrm{II}}$ 误差小于 $10^{-8}$ Ha/Bohr；
+- frozen $F_{\mathrm{loc}}$ 和 $F_{\mathrm{NL}}$ 误差小于 $10^{-7}$ Ha/Bohr；
+- 最小步长的全 SCF 总力误差小于 $2\times10^{-4}$ Ha/Bohr；
+- $\max|\sum_I\mathbf F_I|<10^{-6}$ Ha/Bohr。
+
+有限电子温度下必须差分 `TOTEN`，不能差分 `energy without entropy` 或
+`energy(sigma->0)`。程序以非零退出码报告任何一项失败。
+
+### 1.4 Davidson 性能诊断
 
 高 cutoff 下，基组规模近似按
 
@@ -167,6 +203,18 @@ SCF 总时间。平均 block 宽度可由 `N_Hpsi/N_Hblock` 估计。
 ./h2_opt pseudopotentials/H.pz-vbc.UPF 20.0 12.0 52
 ```
 
+真实 NC-UPF 的非对称 Si2 力验证可运行：
+
+```bash
+make si2_force_check
+./si2_force_check pseudopotentials/Si.pz-vbc.UPF 10.0 16.0 44 0.05 0.002
+```
+
+该程序把 0 号 Si 的解析力分别与中心差分比较：固定密度局域力、
+离子--离子 Ewald 力、固定轨道非局域力，以及每个位移点重新收敛后
+Mermin 自由能的总力。最后一个比较必须使用有限温度自由能，而不是
+`energy without entropy` 或 `energy(sigma->0)`。
+
 FFT 尺寸不能只为了速度任意减小，因为实空间乘积含有平面波频率之差；`h2_opt`
 会在网格不足时主动报错。新增的 `test_davidson` 用同一 FFT Hamiltonian 建立稠密矩阵，
 比较最低本征值和残差，并检查增量 $W=HV$ 缓存没有退化成每轮全子空间重算：
@@ -176,7 +224,7 @@ make test_davidson
 ./test_davidson
 ```
 
-### 1.4 批量 Hamiltonian 与 FFT
+### 1.5 批量 Hamiltonian 与 FFT
 
 `apply_hamiltonian_to_block` 不再逐列调用标量 $H\psi$。对一个含 $m$ 个轨道的 block，
 平面波系数被布置成 $m$ 个连续的三维 reciprocal grids，然后由
@@ -902,8 +950,9 @@ UPF 格式和字段定义参考
 
 ## 12. 下一步路线
 
-1. 用 `Si.pz-vbc.UPF` 对单原子的本征值、$E_{\mathrm{NL}}$ 和高对称零力与
-   Quantum ESPRESSO 做数值交叉验证；
-2. 给主程序增加晶格、元素表和多离子坐标输入，替代当前单原子验证构型；
-3. 对含真实非局域 projector 的双原子非对称构型做全 SCF 总力有限差分；
+1. 在本地真实 `Si.pz-vbc.UPF` 上运行 `si2_force_check`，确认分项、全 SCF
+   和平移不变性判据全部通过；
+2. 将已通过内部分项检查的 Si₂ 能量、本征值和三维力与 Quantum ESPRESSO
+   做同参数数值交叉验证；
+3. 给主程序增加通用晶格、元素表和多离子坐标输入；
 4. 在能量、力和输入模型都稳定后实现通用几何优化器。

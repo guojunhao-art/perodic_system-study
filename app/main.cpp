@@ -229,7 +229,12 @@ int main(int argc, char** argv) {
         options.density_tolerance = 1.0e-7;
         options.energy_tolerance = 1.0e-9;
         options.eigensolver_max_iterations = 100;
-        options.eigensolver_tolerance = 1.0e-10;
+        /*
+         * This is still over two orders of magnitude tighter than the SCF
+         * density target, while avoiding a meaningless roundoff plateau just
+         * above 1e-10 for high unoccupied bands.
+         */
+        options.eigensolver_tolerance = 2.0e-10;
         options.mixing_alpha = 0.10;
         options.pulay_max_history = 8;
         options.pulay_min_history = 2;

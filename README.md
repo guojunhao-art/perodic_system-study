@@ -117,6 +117,67 @@ mkdir -p tmp
 pw.x -in examples/h2_qe.in > h2_qe.out
 ```
 
+### 1.3 Davidson 性能诊断
+
+高 cutoff 下，基组规模近似按
+
+$$
+N_{\mathrm{PW}} \propto G_{\max}^3
+\propto E_{\mathrm{cut}}^{3/2}
+$$
+
+增长，因此从 10 Ha 提高到 20 Ha 并不只是把工作量乘二。Davidson 的主要开销是
+对一组轨道施加 Hamiltonian。令当前正交子空间为 $V$，缓存
+
+$$
+W=HV,
+$$
+
+加入新的修正方向 $T$ 时只计算 $HT$，然后同步扩展
+
+$$
+V'=[V,T],\qquad W'=[W,HT].
+$$
+
+Rayleigh--Ritz 所需的矩阵因此仍为
+
+$$
+H_{\mathrm{sub}}=V^\dagger W,
+$$
+
+但不再在每次 Davidson 迭代中对旧的 $V$ 重复计算 $HV$。厚重启时使用 Ritz 对
+
+$$
+X=VA,\qquad HX=WA,
+$$
+
+所以重启本身也不需要额外的 $H\psi$。代码会先把修正向量对 $V$ 和同批修正方向
+做两遍正交化；如果没有留下新的线性无关方向，就从 $(X,HX)$ 重启，而不是在同一个
+子空间里无限循环。
+
+SCF 行输出中的 `N_Hpsi` 是本轮对多少个向量实际施加了 Hamiltonian；末尾还会给出
+累计 `N_Hpsi`、Davidson 迭代/重启数、`Hpsi_time`、子空间对角化时间和 SCF 总时间。
+`h2_opt` 的每个几何点也会显示累计 `N_Hpsi` 与耗时。可以用下面三组输入建立串行基线：
+
+```bash
+./h2_opt pseudopotentials/H.pz-vbc.UPF 10.0 12.0 36
+./h2_opt pseudopotentials/H.pz-vbc.UPF 15.0 12.0 44
+./h2_opt pseudopotentials/H.pz-vbc.UPF 20.0 12.0 52
+```
+
+FFT 尺寸不能只为了速度任意减小，因为实空间乘积含有平面波频率之差；`h2_opt`
+会在网格不足时主动报错。新增的 `test_davidson` 用同一 FFT Hamiltonian 建立稠密矩阵，
+比较最低本征值和残差，并检查增量 $W=HV$ 缓存没有退化成每轮全子空间重算：
+
+```bash
+make test_davidson
+./test_davidson
+```
+
+这一阶段先消除串行算法中的重复工作并建立计数/计时基线。下一阶段再根据
+`Hpsi_time` 与 `subspace_time` 的占比决定优先做轨道批处理 FFT、FFTW threads / OpenMP，
+还是把较大的 Rayleigh--Ritz 交给并行线性代数；否则并行化容易掩盖真正的热点。
+
 ## 2. 单位和 Fourier 约定
 
 程序内部使用 Hartree 原子单位：

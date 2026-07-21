@@ -74,6 +74,14 @@ struct SCFResult {
 
     double electron_number_from_density = 0.0;
 
+    /* Aggregate eigensolver work over all SCF iterations. */
+    long long eigensolver_hamiltonian_applications = 0;
+    long long eigensolver_iterations = 0;
+    long long eigensolver_restarts = 0;
+    double eigensolver_hamiltonian_seconds = 0.0;
+    double eigensolver_subspace_seconds = 0.0;
+    double wall_time_seconds = 0.0;
+
     /*
      * E at zero T, or the Mermin free energy at finite smearing, including
      * the supplied ion--ion energy. This is the energy to differentiate

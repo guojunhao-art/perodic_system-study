@@ -1,5 +1,6 @@
 /build/
 /fft
+/pwdft
 /upf_info
 /h2_opt
 /test_*

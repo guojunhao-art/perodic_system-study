@@ -4,6 +4,8 @@ project(pw_dft_split LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(PWDFT_ENABLE_MPI "Enable process-level k-point MPI parallelism" OFF)
+
 find_package(Eigen3 QUIET)
 find_package(PkgConfig QUIET)
 
@@ -32,10 +34,12 @@ add_library(pw_dft_core
     src/hamiltonian.cpp
     src/input.cpp
     src/kpoint_scf.cpp
+    src/scf_convergence.cpp
     src/scf_modules.cpp
     src/scf.cpp
     src/eigensolver.cpp
     src/mixing.cpp
+    src/parallel.cpp
     src/ewald.cpp
     src/potentials.cpp
     src/forces.cpp
@@ -55,6 +59,12 @@ else()
 endif()
 
 target_link_libraries(pw_dft_core PUBLIC fftw3 m)
+
+if (PWDFT_ENABLE_MPI)
+    find_package(MPI REQUIRED COMPONENTS CXX)
+    target_compile_definitions(pw_dft_core PUBLIC PWDFT_USE_MPI=1)
+    target_link_libraries(pw_dft_core PUBLIC MPI::MPI_CXX)
+endif()
 
 if (TARGET PkgConfig::LIBXC)
     target_link_libraries(pw_dft_core PUBLIC PkgConfig::LIBXC)
@@ -106,6 +116,18 @@ add_test(NAME poscar_and_calculation_input COMMAND test_input)
 add_executable(test_kpoints tests/test_kpoints.cpp)
 target_link_libraries(test_kpoints PRIVATE pw_dft_core)
 add_test(NAME multi_kpoint_scf COMMAND test_kpoints)
+if (PWDFT_ENABLE_MPI)
+    add_test(
+        NAME multi_kpoint_scf_mpi_2ranks
+        COMMAND
+            ${MPIEXEC_EXECUTABLE}
+            ${MPIEXEC_NUMPROC_FLAG} 2
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:test_kpoints>
+            ${MPIEXEC_POSTFLAGS}
+    )
+    set_tests_properties(multi_kpoint_scf_mpi_2ranks PROPERTIES PROCESSORS 2)
+endif()
 
 add_executable(test_xc_functional tests/test_xc_functional.cpp)
 target_link_libraries(test_xc_functional PRIVATE pw_dft_core)

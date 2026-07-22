@@ -154,6 +154,10 @@ int main() {
                      "SCF iteration parsing mismatch");
         require_true(config.scf.eigensolver_max_iterations == 77,
                      "eigensolver iteration parsing mismatch");
+        require_close(config.scf.eigensolver_initial_tolerance, 5.0e-8,
+                      1.0e-20, "initial eigensolver tolerance parsing");
+        require_close(config.scf.eigensolver_tolerance, 4.0e-10,
+                      1.0e-22, "final eigensolver tolerance parsing");
         require_true(config.scf.verbosity == SCFVerbosity::Detailed,
                      "verbosity parsing mismatch");
 

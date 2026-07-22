@@ -18,6 +18,7 @@ scf_max_iterations = 240
 density_tolerance = 1.0e-7
 energy_tolerance_ha = 1.0e-9
 eigensolver_max_iterations = 100
+eigensolver_initial_tolerance_ha = 1.0e-7
 eigensolver_tolerance_ha = 2.0e-10
 mixing_alpha = 0.10
 pulay_max_history = 8

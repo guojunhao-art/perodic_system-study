@@ -1,6 +1,7 @@
 #include "calculation.hpp"
 
 #include "ewald.hpp"
+#include "parallel.hpp"
 #include "upf_local_potential.hpp"
 #include "upf_nonlocal.hpp"
 #include "upf_reader.hpp"
@@ -330,21 +331,65 @@ SinglePointResult run_single_point(
     forces.nonlocal.assign(
         structure.atoms.size(), Eigen::Vector3d::Zero()
     );
-    for (int ik = 0;
-         ik < static_cast<int>(kpoint_hamiltonians.size());
-         ++ik) {
-        const auto force_at_k = compute_nonlocal_ionic_forces(
-            kpoint_hamiltonians[ik].basis,
-            kpoint_hamiltonians[ik].projectors,
-            scf.kpoints[ik].orbitals,
-            scf.kpoints[ik].occupations,
-            static_cast<int>(structure.atoms.size())
-        );
-        for (int iatom = 0;
-             iatom < static_cast<int>(structure.atoms.size());
-             ++iatom) {
-            forces.nonlocal[iatom] +=
-                kpoint_hamiltonians[ik].weight * force_at_k[iatom];
+    const parallel::KPointDistribution distribution(
+        static_cast<int>(kpoint_hamiltonians.size())
+    );
+    std::string local_force_error;
+    try {
+        for (int ik : distribution.local_kpoints()) {
+            if (scf.kpoints[ik].owner_rank != distribution.rank() ||
+                scf.kpoints[ik].orbitals.size() == 0) {
+                throw std::runtime_error(
+                    "The owning rank does not hold orbitals for k point "
+                    + std::to_string(ik) + "."
+                );
+            }
+            const auto force_at_k = compute_nonlocal_ionic_forces(
+                kpoint_hamiltonians[ik].basis,
+                kpoint_hamiltonians[ik].projectors,
+                scf.kpoints[ik].orbitals,
+                scf.kpoints[ik].occupations,
+                static_cast<int>(structure.atoms.size())
+            );
+            for (int iatom = 0;
+                 iatom < static_cast<int>(structure.atoms.size());
+                 ++iatom) {
+                forces.nonlocal[iatom] +=
+                    kpoint_hamiltonians[ik].weight * force_at_k[iatom];
+            }
+        }
+    } catch (const std::exception& error) {
+        local_force_error =
+            "Nonlocal-force assembly failed on MPI rank "
+            + std::to_string(distribution.rank()) + ": " + error.what();
+    } catch (...) {
+        local_force_error =
+            "Nonlocal-force assembly failed with an unknown exception on "
+            "MPI rank " + std::to_string(distribution.rank()) + ".";
+    }
+    const std::string force_error = parallel::first_error(local_force_error);
+    if (!force_error.empty()) {
+        throw std::runtime_error(force_error);
+    }
+
+    std::vector<double> packed_nonlocal_forces(
+        3 * structure.atoms.size(), 0.0
+    );
+    for (int iatom = 0;
+         iatom < static_cast<int>(structure.atoms.size());
+         ++iatom) {
+        for (int direction = 0; direction < 3; ++direction) {
+            packed_nonlocal_forces[3 * iatom + direction] =
+                forces.nonlocal[iatom][direction];
+        }
+    }
+    parallel::sum_in_place(packed_nonlocal_forces);
+    for (int iatom = 0;
+         iatom < static_cast<int>(structure.atoms.size());
+         ++iatom) {
+        for (int direction = 0; direction < 3; ++direction) {
+            forces.nonlocal[iatom][direction] =
+                packed_nonlocal_forces[3 * iatom + direction];
         }
     }
     forces.total.resize(structure.atoms.size(), Eigen::Vector3d::Zero());

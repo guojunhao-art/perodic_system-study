@@ -3,6 +3,7 @@
 #include "eigensolver.hpp"
 #include "mixing.hpp"
 #include "potentials.hpp"
+#include "scf_convergence.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -68,7 +69,8 @@ void print_compact_header(std::ostream& out) {
         << "-------------------------------- electronic minimization "
         << "--------------------------------\n"
         << "          N                     E              dE"
-        << "        rms(rho)  Niter  N_Hpsi      rms(eig)\n";
+        << "        rms(rho)  Niter  N_Hpsi      rms(eig)"
+        << "       eig_tol\n";
 }
 
 void print_compact_iteration(
@@ -79,7 +81,8 @@ void print_compact_iteration(
     double drho,
     int davidson_iterations,
     int hamiltonian_applications,
-    double eigensolver_residual) {
+    double eigensolver_residual,
+    double eigensolver_tolerance) {
 
     const auto old_flags = out.flags();
     const auto old_precision = out.precision();
@@ -92,6 +95,7 @@ void print_compact_iteration(
         << "  " << std::setw(5) << davidson_iterations
         << "  " << std::setw(7) << hamiltonian_applications
         << "  " << std::setw(12) << eigensolver_residual
+        << "  " << std::setw(12) << eigensolver_tolerance
         << "\n";
 
     out.flags(old_flags);
@@ -105,7 +109,8 @@ void print_detailed_iteration(
     const SCFResult& result,
     double dE,
     double drho,
-    int pulay_history_size) {
+    int pulay_history_size,
+    double eigensolver_tolerance) {
 
     out << "E_NL = " << result.energy.nonlocal << "\n";
     out << "E_electronic = " << result.energy.total
@@ -120,6 +125,7 @@ void print_detailed_iteration(
         << "  sigmaS = " << std::setw(12) << result.energy.entropy_correction
         << "  dE = " << std::setw(12) << dE
         << "  drho = " << std::setw(12) << drho
+        << "  eig_tol = " << eigensolver_tolerance
         << "  pulay_hist = " << pulay_history_size
         << "  Ne_occ = " << result.occupations.nelec_sum
         << "  Ne_out = " << result.electron_number_from_density
@@ -198,6 +204,11 @@ SCFResult run_scf(
         options,
         initial_guess
     );
+    EigensolverToleranceSchedule eigensolver_tolerances(
+        options.eigensolver_initial_tolerance,
+        options.eigensolver_tolerance,
+        options.density_tolerance
+    );
 
     const double volume = lattice.volume();
     const double dV = volume / static_cast<double>(fft.grid.ngrid);
@@ -243,6 +254,7 @@ SCFResult run_scf(
     }
 
     for (int iter = 0; iter < options.max_iterations; ++iter) {
+        const double eigensolver_tolerance = eigensolver_tolerances.current();
         const auto VH = build_hartree_potential(lattice, fft, rho);
         const auto xc_input = xc.evaluate(rho, dV);
         const auto Veff = combine_effective_potential(
@@ -259,7 +271,7 @@ SCFResult run_scf(
             C_guess,
             options.eigensolver_max_iterations,
             max_subspace,
-            options.eigensolver_tolerance,
+            eigensolver_tolerance,
             options.eigensolver_denom_floor,
             projector_ptr,
             logging_enabled && options.verbosity == SCFVerbosity::Detailed
@@ -272,7 +284,7 @@ SCFResult run_scf(
                 << "Davidson eigensolver did not converge during SCF: "
                 << "max residual = " << maximum_ks_residual
                 << ", requested tolerance = "
-                << options.eigensolver_tolerance
+                << eigensolver_tolerance
                 << ", worst band = " << ks.max_residual_band
                 << ", subspace = " << ks.final_subspace_size
                 << ", Hpsi applications = "
@@ -360,6 +372,7 @@ SCFResult run_scf(
         result.iterations = iter + 1;
         result.final_density_residual = drho;
         result.final_energy_change = dE;
+        result.final_eigensolver_tolerance = eigensolver_tolerance;
         result.eigenvalues = ks.eigenvalues;
         result.orbitals = orbitals;
         result.occupations = occupations;
@@ -379,7 +392,8 @@ SCFResult run_scf(
                 drho,
                 ks.iterations,
                 ks.hamiltonian_applications,
-                maximum_residual(ks.residual_norms)
+                maximum_residual(ks.residual_norms),
+                eigensolver_tolerance
             );
         } else if (logging_enabled &&
                    options.verbosity == SCFVerbosity::Detailed) {
@@ -390,19 +404,33 @@ SCFResult run_scf(
                 result,
                 dE,
                 drho,
-                pulay.history_size()
+                pulay.history_size(),
+                eigensolver_tolerance
             );
         }
 
-        if (iter > 0 &&
+        const bool outer_converged = iter > 0 &&
             drho < options.density_tolerance &&
-            dE < options.energy_tolerance) {
+            dE < options.energy_tolerance;
+        if (outer_converged &&
+            eigensolver_tolerances.at_final_tolerance()) {
             result.converged = true;
             if (logging_enabled &&
                 options.verbosity == SCFVerbosity::Detailed) {
                 *log_stream << "SCF converged.\n";
             }
             break;
+        }
+        if (outer_converged) {
+            eigensolver_tolerances.force_final_tolerance();
+            if (logging_enabled &&
+                options.verbosity == SCFVerbosity::Detailed) {
+                *log_stream
+                    << "Outer SCF criteria reached; requesting final "
+                    << "Davidson refinement.\n";
+            }
+        } else {
+            eigensolver_tolerances.advance(drho);
         }
 
         previous_energy = energy_for_convergence;

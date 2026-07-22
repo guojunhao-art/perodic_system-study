@@ -1,6 +1,7 @@
 #include "input.hpp"
 #include "parallel.hpp"
 #include "scf.hpp"
+#include "scf_convergence.hpp"
 #include "scf_modules.hpp"
 
 #include <algorithm>
@@ -24,6 +25,36 @@ void require_close(
             + ", expected = " + std::to_string(expected)
         );
     }
+}
+
+void test_eigensolver_tolerance_schedule() {
+    EigensolverToleranceSchedule schedule(1.0e-7, 2.0e-10, 1.0e-7);
+    require_close(schedule.current(), 1.0e-7, 0.0,
+                  "Initial eigensolver tolerance");
+
+    schedule.advance(1.0e-3);
+    require_close(schedule.current(), 2.0e-8, 1.0e-22,
+                  "Density-controlled eigensolver tolerance");
+    schedule.advance(1.0e-1);
+    require_close(schedule.current(), 2.0e-8, 1.0e-22,
+                  "Eigensolver tolerance must not loosen");
+    schedule.advance(1.0e-5);
+    require_close(schedule.current(), 2.0e-9, 1.0e-23,
+                  "Second density-controlled tolerance");
+    schedule.advance(1.0e-7);
+    require_close(schedule.current(), 2.0e-10, 1.0e-24,
+                  "Final eigensolver tolerance");
+    if (!schedule.at_final_tolerance()) {
+        throw std::runtime_error("Tolerance schedule did not reach final accuracy.");
+    }
+
+    EigensolverToleranceSchedule capped(1.0e-5, 1.0e-10, 1.0e-7);
+    capped.advance(0.0);
+    require_close(capped.current(), 1.0e-6, 1.0e-20,
+                  "One-decade tightening cap");
+    capped.force_final_tolerance();
+    require_close(capped.current(), 1.0e-10, 0.0,
+                  "Forced final eigensolver tolerance");
 }
 
 void test_shifted_basis() {
@@ -142,6 +173,12 @@ void test_two_kpoint_scf() {
     if (!result.converged) {
         throw std::runtime_error("Two-k-point jellium SCF did not converge.");
     }
+    require_close(
+        result.final_eigensolver_tolerance,
+        options.eigensolver_tolerance,
+        0.0,
+        "Final multi-k-point eigensolver refinement"
+    );
     require_close(result.occupations.nelec_sum, 2.0, 1.0e-12,
                   "SCF weighted occupation count");
     require_close(result.electron_number_from_density, 2.0, 1.0e-10,
@@ -254,6 +291,18 @@ void test_gamma_wrapper_equivalence() {
         throw std::runtime_error("Gamma equivalence SCF did not converge.");
     }
     require_close(
+        legacy.final_eigensolver_tolerance,
+        options.eigensolver_tolerance,
+        0.0,
+        "Final Gamma eigensolver refinement"
+    );
+    require_close(
+        generalized.final_eigensolver_tolerance,
+        options.eigensolver_tolerance,
+        0.0,
+        "Final generalized eigensolver refinement"
+    );
+    require_close(
         generalized.variational_energy,
         legacy.variational_energy,
         1.0e-11,
@@ -276,6 +325,7 @@ int main(int argc, char** argv) {
     try {
         parallel::Environment environment(argc, argv);
         try {
+            test_eigensolver_tolerance_schedule();
             test_shifted_basis();
             test_global_occupations();
             test_gamma_wrapper_equivalence();

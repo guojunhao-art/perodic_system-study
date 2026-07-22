@@ -12,6 +12,7 @@ Hartree 原子单位。代码保留了许多生产级程序会封装起来的中
 - 所有 k 点共享化学势的零温/Fermi–Dirac 占据及带权密度、能量和力；
 - LibXC 非自旋极化 LDA exchange + Perdew–Zunger correlation SCF；
 - fixed、简并感知零温和 Fermi–Dirac 占据；
+- 随外层密度残差自动收紧、并在退出前严格精修的 Davidson 容差；
 - 线性/自适应辅助函数和 Pulay density mixing；
 - Gaussian 平滑局域赝势、短程修正和离子–离子能；
 - 保留用于解析回归测试的 $s$-like、$p$-like Gaussian projector；
@@ -137,6 +138,18 @@ ecut_ha = 10.0
 fft_grid = 48 48 48
 kpoints = gamma
 ```
+
+Davidson 内层求解默认从较松的阈值开始，并随 SCF 密度残差逐渐收紧：
+
+```text
+density_tolerance = 1.0e-7
+eigensolver_initial_tolerance_ha = 1.0e-7
+eigensolver_tolerance_ha = 2.0e-10
+```
+
+其中 `eigensolver_tolerance_ha` 始终是最终精度。即使密度和能量已经满足外层
+收敛条件，程序也会用该阈值再完成一次 Davidson 精修后才退出。把 initial 与
+final 设成相同数值即可恢复固定容差。
 
 POSCAR 按标准 VASP 单位解释：晶格和 Cartesian 坐标为 Å，读入后自动转换为 Bohr；
 `Direct` 坐标不做长度转换。当前支持一个正缩放因子、负的目标体积缩放、VASP 5
@@ -588,6 +601,29 @@ $$
 
 随后组合历史 trial densities。混合后代码裁掉微小负密度并重新归一化到
 $N_e$。
+
+SCF 初期输入势仍在快速变化，无需把每个 Davidson 本征问题都求到最终精度。令
+$\tau_f$ 为最终本征残差阈值、$\tau_0$ 为初始阈值、$r_n$ 为上一轮密度残差、
+$r_f$ 为目标密度残差，下一轮期望阈值取为
+
+$$
+\tau_{\mathrm{desired}}=
+\operatorname{clip}\left(
+\tau_f\sqrt{\frac{r_n}{r_f}},\tau_f,\tau_0
+\right).
+$$
+
+实际阈值不会因密度残差反弹而放宽，并且通常每轮最多收紧一个数量级：
+
+$$
+\tau_{n+1}=\min\left[
+\tau_n,\max\left(\tau_{\mathrm{desired}},\frac{\tau_n}{10}\right)
+\right].
+$$
+
+当密度和能量第一次同时达标但 $\tau_n>\tau_f$ 时，下一轮直接切换到 $\tau_f$；
+只有这次严格求解后外层条件仍然成立，SCF 才被标记为收敛。`DAV:` 每行同时输出
+`rms(eig)` 与本轮 `eig_tol`，便于确认内外层精度是否匹配。
 
 ## 7. 当前 Gaussian 离子模型
 

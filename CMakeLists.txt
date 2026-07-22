@@ -34,6 +34,7 @@ add_library(pw_dft_core
     src/hamiltonian.cpp
     src/input.cpp
     src/kpoint_scf.cpp
+    src/scf_convergence.cpp
     src/scf_modules.cpp
     src/scf.cpp
     src/eigensolver.cpp

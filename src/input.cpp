@@ -565,6 +565,8 @@ CalculationConfig read_calculation_config(const std::string& path) {
             config.scf.eigensolver_max_iterations = parse_integer(value, key);
         } else if (key == "eigensolver_max_subspace") {
             config.scf.eigensolver_max_subspace = parse_integer(value, key);
+        } else if (key == "eigensolver_initial_tolerance_ha") {
+            config.scf.eigensolver_initial_tolerance = parse_double(value, key);
         } else if (key == "eigensolver_tolerance_ha") {
             config.scf.eigensolver_tolerance = parse_double(value, key);
         } else if (key == "eigensolver_denom_floor_ha") {
@@ -680,10 +682,18 @@ CalculationConfig read_calculation_config(const std::string& path) {
     }
     if (config.scf.density_tolerance <= 0.0 ||
         config.scf.energy_tolerance <= 0.0 ||
+        config.scf.eigensolver_initial_tolerance <= 0.0 ||
         config.scf.eigensolver_tolerance <= 0.0 ||
         config.scf.eigensolver_denom_floor <= 0.0 ||
         config.scf.degeneracy_tolerance <= 0.0) {
         throw std::runtime_error("SCF tolerances must be positive.");
+    }
+    if (config.scf.eigensolver_initial_tolerance <
+        config.scf.eigensolver_tolerance) {
+        throw std::runtime_error(
+            "eigensolver_initial_tolerance_ha must be no tighter than "
+            "eigensolver_tolerance_ha."
+        );
     }
     if (config.scf.eigensolver_max_subspace < 0) {
         throw std::runtime_error(

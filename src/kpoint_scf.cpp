@@ -4,6 +4,7 @@
 #include "mixing.hpp"
 #include "parallel.hpp"
 #include "potentials.hpp"
+#include "scf_convergence.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -112,7 +113,8 @@ void print_header(std::ostream& out, int nkpoints, int process_count) {
         << "    active k-point ranks = "
         << std::min(nkpoints, process_count) << "\n"
         << "          N                     E              dE"
-        << "        rms(rho)  Niter  N_Hpsi      rms(eig)\n";
+        << "        rms(rho)  Niter  N_Hpsi      rms(eig)"
+        << "       eig_tol\n";
 }
 
 void print_iteration(
@@ -123,7 +125,8 @@ void print_iteration(
     double density_residual,
     int eigensolver_iterations,
     int hamiltonian_applications,
-    double eigensolver_residual) {
+    double eigensolver_residual,
+    double eigensolver_tolerance) {
 
     const auto flags = out.flags();
     const auto precision = out.precision();
@@ -136,6 +139,7 @@ void print_iteration(
         << "  " << std::setw(5) << eigensolver_iterations
         << "  " << std::setw(7) << hamiltonian_applications
         << "  " << std::setw(12) << eigensolver_residual
+        << "  " << std::setw(12) << eigensolver_tolerance
         << "\n";
     out.flags(flags);
     out.precision(precision);
@@ -197,6 +201,11 @@ KPointSCFResult run_kpoint_scf(
 
     const auto scf_start = std::chrono::steady_clock::now();
     validate_inputs(kpoints, fft, ionic_potential, options, initial_guess);
+    EigensolverToleranceSchedule eigensolver_tolerances(
+        options.eigensolver_initial_tolerance,
+        options.eigensolver_tolerance,
+        options.density_tolerance
+    );
     const parallel::KPointDistribution distribution(
         static_cast<int>(kpoints.size())
     );
@@ -252,6 +261,7 @@ KPointSCFResult run_kpoint_scf(
     }
 
     for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
+        const double eigensolver_tolerance = eigensolver_tolerances.current();
         const auto hartree_input = build_hartree_potential(lattice, fft, rho);
         const auto xc_input = xc.evaluate(rho, dV);
         const auto effective_potential = combine_effective_potential(
@@ -290,7 +300,7 @@ KPointSCFResult run_kpoint_scf(
                     orbital_guesses[ik],
                     options.eigensolver_max_iterations,
                     maximum_subspace,
-                    options.eigensolver_tolerance,
+                    eigensolver_tolerance,
                     options.eigensolver_denom_floor,
                     projector_pointer,
                     logging_enabled
@@ -308,7 +318,7 @@ KPointSCFResult run_kpoint_scf(
                         << point.fractional_position.transpose()
                         << "): max residual = " << residual
                         << ", requested tolerance = "
-                        << options.eigensolver_tolerance
+                        << eigensolver_tolerance
                         << ", worst band = "
                         << solution.max_residual_band
                         << ", subspace = "
@@ -524,6 +534,7 @@ KPointSCFResult run_kpoint_scf(
         result.iterations = iteration + 1;
         result.final_density_residual = density_residual;
         result.final_energy_change = energy_change;
+        result.final_eigensolver_tolerance = eigensolver_tolerance;
         result.kpoints = std::move(electronic_states);
         result.occupations = occupations;
         result.density = density_output;
@@ -542,11 +553,13 @@ KPointSCFResult run_kpoint_scf(
                 density_residual,
                 iteration_eigensolver_steps,
                 iteration_hamiltonian_applications,
-                iteration_maximum_residual
+                iteration_maximum_residual,
+                eigensolver_tolerance
             );
             if (options.verbosity == SCFVerbosity::Detailed) {
                 *log_stream << "       mu = " << occupations.mu
-                    << "  weighted Ne = " << occupations.nelec_sum << "\n";
+                    << "  weighted Ne = " << occupations.nelec_sum
+                    << "  eig_tol = " << eigensolver_tolerance << "\n";
                 const bool print_bands =
                     iteration < options.band_print_interval
                     || (options.band_print_interval > 0 &&
@@ -573,11 +586,24 @@ KPointSCFResult run_kpoint_scf(
             }
         }
 
-        if (iteration > 0 &&
+        const bool outer_converged = iteration > 0 &&
             density_residual < options.density_tolerance &&
-            energy_change < options.energy_tolerance) {
+            energy_change < options.energy_tolerance;
+        if (outer_converged &&
+            eigensolver_tolerances.at_final_tolerance()) {
             result.converged = true;
             break;
+        }
+        if (outer_converged) {
+            eigensolver_tolerances.force_final_tolerance();
+            if (logging_enabled &&
+                options.verbosity == SCFVerbosity::Detailed) {
+                *log_stream
+                    << "       Outer SCF criteria reached; requesting final "
+                    << "Davidson refinement.\n";
+            }
+        } else {
+            eigensolver_tolerances.advance(density_residual);
         }
 
         previous_energy = energy_for_convergence;

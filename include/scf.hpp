@@ -36,6 +36,7 @@ struct SCFOptions {
 
     int eigensolver_max_iterations = 80;
     int eigensolver_max_subspace = 0;
+    double eigensolver_initial_tolerance = 1.0e-7;
     double eigensolver_tolerance = 1.0e-10;
     double eigensolver_denom_floor = 1.0e-6;
 
@@ -65,6 +66,7 @@ struct SCFResult {
     int iterations = 0;
     double final_density_residual = 0.0;
     double final_energy_change = 0.0;
+    double final_eigensolver_tolerance = 0.0;
 
     Eigen::VectorXd eigenvalues;
     Eigen::MatrixXcd orbitals;
@@ -118,6 +120,7 @@ struct KPointSCFResult {
     int iterations = 0;
     double final_density_residual = 0.0;
     double final_energy_change = 0.0;
+    double final_eigensolver_tolerance = 0.0;
 
     std::vector<KPointElectronicState> kpoints;
     KPointOccupationResult occupations;

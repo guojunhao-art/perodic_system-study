@@ -31,6 +31,7 @@ endif()
 
 add_library(pw_dft_core
     src/calculation.cpp
+    src/relaxation.cpp
     src/hamiltonian.cpp
     src/input.cpp
     src/kpoint_scf.cpp
@@ -156,3 +157,7 @@ add_test(NAME davidson_incremental_hpsi COMMAND test_davidson)
 add_executable(test_batched_hamiltonian tests/test_batched_hamiltonian.cpp)
 target_link_libraries(test_batched_hamiltonian PRIVATE pw_dft_core)
 add_test(NAME batched_hamiltonian COMMAND test_batched_hamiltonian)
+
+add_executable(test_relaxation tests/test_relaxation.cpp)
+target_link_libraries(test_relaxation PRIVATE pw_dft_core)
+add_test(NAME fixed_cell_bfgs_relaxation COMMAND test_relaxation)

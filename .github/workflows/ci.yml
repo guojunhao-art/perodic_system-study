@@ -1,0 +1,40 @@
+name: C++ tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake g++ libeigen3-dev libfftw3-dev libxc-dev \
+            openmpi-bin libopenmpi-dev
+
+      - name: Configure serial build
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build serial targets
+        run: cmake --build build -j2
+
+      - name: Run serial tests
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Configure MPI build
+        run: >-
+          cmake -S . -B build-mpi
+          -DCMAKE_BUILD_TYPE=Release
+          -DPWDFT_ENABLE_MPI=ON
+
+      - name: Build MPI targets
+        run: cmake --build build-mpi -j2
+
+      - name: Run MPI tests
+        run: ctest --test-dir build-mpi --output-on-failure

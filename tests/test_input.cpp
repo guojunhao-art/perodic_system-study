@@ -52,6 +52,11 @@ int main() {
                      "POSCAR species order mismatch");
         require_true(direct.atoms.size() == 2,
                      "POSCAR atom count mismatch");
+        require_true(
+            direct.selective_dynamics &&
+            !direct.selective_dynamics_cartesian,
+            "Direct selective-dynamics coordinate mode mismatch"
+        );
         require_close(
             direct.lattice_bohr(0, 0),
             ANGSTROM_TO_BOHR,
@@ -160,6 +165,41 @@ int main() {
                       1.0e-22, "final eigensolver tolerance parsing");
         require_true(config.scf.verbosity == SCFVerbosity::Detailed,
                      "verbosity parsing mismatch");
+
+        const CalculationConfig relax_config = read_calculation_config(
+            data_path("general_relax.in")
+        );
+        require_true(
+            relax_config.calculation == CalculationType::Relax,
+            "relax calculation parsing mismatch"
+        );
+        require_true(relax_config.relaxation.max_ionic_steps == 37,
+                     "max_ionic_steps parsing mismatch");
+        require_true(relax_config.relaxation.max_backtracks == 4,
+                     "max_backtracks parsing mismatch");
+        require_close(
+            relax_config.relaxation.force_tolerance_ha_bohr,
+            3.0e-4,
+            1.0e-16,
+            "force tolerance parsing"
+        );
+        require_close(
+            relax_config.relaxation.max_step_angstrom,
+            0.075,
+            1.0e-16,
+            "maximum ionic step parsing"
+        );
+        require_close(
+            relax_config.relaxation.initial_curvature_ha_bohr2,
+            0.20,
+            1.0e-16,
+            "initial BFGS curvature parsing"
+        );
+        require_true(
+            relax_config.relaxation.contcar_path == "test.CONTCAR" &&
+            relax_config.relaxation.trajectory_path == "test-relax.xyz",
+            "relaxation output-path parsing mismatch"
+        );
 
         const KPointSet gamma_mesh = make_uniform_kpoint_mesh(
             {{2, 1, 1}}, true

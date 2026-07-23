@@ -74,7 +74,8 @@ double maximum_force_component(
 SinglePointResult run_single_point(
     const AtomicStructure& structure,
     const CalculationConfig& config,
-    std::ostream* log_stream) {
+    std::ostream* log_stream,
+    const KPointSCFInitialGuess& initial_guess) {
 
     if (structure.atoms.empty()) {
         throw std::runtime_error("The structure contains no atoms.");
@@ -313,7 +314,7 @@ SinglePointResult run_single_point(
         local_potential,
         ewald.total,
         options,
-        {},
+        initial_guess,
         log_stream
     );
 

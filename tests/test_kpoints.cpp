@@ -1,3 +1,4 @@
+#include "calculation.hpp"
 #include "input.hpp"
 #include "parallel.hpp"
 #include "scf.hpp"
@@ -57,6 +58,48 @@ void test_eigensolver_tolerance_schedule() {
     capped.force_final_tolerance();
     require_close(capped.current(), 1.0e-10, 0.0,
                   "Forced final eigensolver tolerance");
+}
+
+void test_vasp_style_scf_convergence() {
+    if (!scf_energy_changes_converged(
+            9.0e-7, -4.0e-7, 1.0e-6)) {
+        throw std::runtime_error(
+            "SCF convergence rejected energy changes below EDIFF."
+        );
+    }
+    if (scf_energy_changes_converged(
+            1.1e-6, 4.0e-7, 1.0e-6)) {
+        throw std::runtime_error(
+            "SCF convergence accepted |dE| above EDIFF."
+        );
+    }
+    if (scf_energy_changes_converged(
+            4.0e-7, -1.1e-6, 1.0e-6)) {
+        throw std::runtime_error(
+            "SCF convergence accepted |d eps| above EDIFF."
+        );
+    }
+}
+
+void test_automatic_fft_grid() {
+    const double cell_bohr = 12.0 * ANGSTROM_TO_BOHR;
+    const Lattice lattice(
+        Eigen::Vector3d(cell_bohr, 0.0, 0.0),
+        Eigen::Vector3d(0.0, cell_bohr, 0.0),
+        Eigen::Vector3d(0.0, 0.0, cell_bohr)
+    );
+    KPointHamiltonian gamma;
+    gamma.basis.generate(
+        lattice, Eigen::Vector3d::Zero(), 10.0
+    );
+
+    const std::array<int, 3> dimensions =
+        automatic_fft_grid_dimensions({gamma});
+    if (dimensions != std::array<int, 3>{{72, 72, 72}}) {
+        throw std::runtime_error(
+            "The 12-Angstrom, 10-Ha automatic FFT grid is not 72^3."
+        );
+    }
 }
 
 void test_shifted_basis() {
@@ -353,6 +396,14 @@ void test_two_kpoint_scf() {
     if (!result.converged) {
         throw std::runtime_error("Two-k-point jellium SCF did not converge.");
     }
+    if (!scf_energy_changes_converged(
+            result.final_energy_change,
+            result.final_band_energy_change,
+            options.energy_tolerance)) {
+        throw std::runtime_error(
+            "Two-k-point SCF stopped without satisfying dE and d eps."
+        );
+    }
     require_close(
         result.final_eigensolver_tolerance,
         options.eigensolver_tolerance,
@@ -490,6 +541,18 @@ void test_gamma_wrapper_equivalence() {
     if (!legacy.converged || !generalized.converged) {
         throw std::runtime_error("Gamma equivalence SCF did not converge.");
     }
+    if (!scf_energy_changes_converged(
+            legacy.final_energy_change,
+            legacy.final_band_energy_change,
+            options.energy_tolerance) ||
+        !scf_energy_changes_converged(
+            generalized.final_energy_change,
+            generalized.final_band_energy_change,
+            options.energy_tolerance)) {
+        throw std::runtime_error(
+            "Gamma SCF stopped without satisfying dE and d eps."
+        );
+    }
     require_close(
         legacy.final_eigensolver_tolerance,
         options.eigensolver_tolerance,
@@ -526,6 +589,8 @@ int main(int argc, char** argv) {
         parallel::Environment environment(argc, argv);
         try {
             test_eigensolver_tolerance_schedule();
+            test_vasp_style_scf_convergence();
+            test_automatic_fft_grid();
             test_shifted_basis();
             test_global_occupations();
             test_collinear_spin_scf();

@@ -11,6 +11,7 @@
 struct SinglePointResult {
     bool converged = false;
     double ecut_hartree = 0.0;
+    std::array<int, 3> fft_grid{{0, 0, 0}};
     int plane_wave_count = 0;
     int radial_projector_count = 0;
     int expanded_projector_count = 0;
@@ -21,6 +22,9 @@ struct SinglePointResult {
     KPointSCFResult scf;
     IonicForceComponents forces;
 };
+
+std::array<int, 3> automatic_fft_grid_dimensions(
+    const std::vector<KPointHamiltonian>& kpoint_hamiltonians);
 
 SinglePointResult run_single_point(
     const AtomicStructure& structure,

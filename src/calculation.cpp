@@ -11,6 +11,7 @@
 #include <cctype>
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <map>
 #include <ostream>
 #include <stdexcept>
@@ -29,9 +30,8 @@ bool is_perdew_zunger_lda(const std::string& functional) {
     return uppercase.find("PZ") != std::string::npos;
 }
 
-void require_fft_grid_for_basis_products(
-    const PlaneWaveBasis3D& basis,
-    const FFTGrid& grid) {
+Eigen::Vector3i maximum_required_fft_frequency(
+    const PlaneWaveBasis3D& basis) {
 
     if (basis.gvectors.empty()) {
         throw std::runtime_error("The plane-wave basis is empty.");
@@ -44,13 +44,48 @@ void require_fft_grid_for_basis_products(
         maximum_frequency = maximum_frequency.cwiseMax(gvector.n);
     }
 
+    return maximum_frequency.cwiseAbs()
+        .cwiseMax(minimum_frequency.cwiseAbs())
+        .cwiseMax(maximum_frequency - minimum_frequency);
+}
+
+bool has_only_small_prime_factors(int value) {
+    for (int factor : {2, 3, 5}) {
+        while (value % factor == 0) {
+            value /= factor;
+        }
+    }
+    return value == 1;
+}
+
+int next_fft_friendly_even_size(int minimum_size) {
+    int candidate = std::max(4, minimum_size);
+    if (candidate % 2 != 0) {
+        ++candidate;
+    }
+    while (!has_only_small_prime_factors(candidate)) {
+        if (candidate > std::numeric_limits<int>::max() - 2) {
+            throw std::runtime_error(
+                "Automatic FFT grid dimension exceeds integer range."
+            );
+        }
+        candidate += 2;
+    }
+    return candidate;
+}
+
+void require_fft_grid_for_basis_products(
+    const PlaneWaveBasis3D& basis,
+    const FFTGrid& grid) {
+
+    const Eigen::Vector3i required_frequency =
+        maximum_required_fft_frequency(basis);
     const Eigen::Vector3i grid_sizes(grid.n1, grid.n2, grid.n3);
     for (int direction = 0; direction < 3; ++direction) {
-        const int largest_product_frequency =
-            maximum_frequency[direction] - minimum_frequency[direction];
         const int largest_unaliased_frequency =
             (grid_sizes[direction] - 1) / 2;
-        if (largest_product_frequency > largest_unaliased_frequency) {
+        if (required_frequency[direction] >
+            largest_unaliased_frequency) {
             throw std::runtime_error(
                 "fft_grid is too small for products of cutoff wavefunctions "
                 "in direction " + std::to_string(direction) + "."
@@ -71,6 +106,38 @@ double maximum_force_component(
 
 } // namespace
 
+std::array<int, 3> automatic_fft_grid_dimensions(
+    const std::vector<KPointHamiltonian>& kpoint_hamiltonians) {
+
+    if (kpoint_hamiltonians.empty()) {
+        throw std::runtime_error(
+            "Cannot determine an FFT grid without a plane-wave basis."
+        );
+    }
+
+    Eigen::Vector3i required_frequency = Eigen::Vector3i::Zero();
+    for (const KPointHamiltonian& point : kpoint_hamiltonians) {
+        required_frequency = required_frequency.cwiseMax(
+            maximum_required_fft_frequency(point.basis)
+        );
+    }
+
+    std::array<int, 3> dimensions{};
+    for (int direction = 0; direction < 3; ++direction) {
+        if (required_frequency[direction] >
+            (std::numeric_limits<int>::max() - 2) / 2) {
+            throw std::runtime_error(
+                "Automatic FFT grid dimension exceeds integer range."
+            );
+        }
+        const int minimum_size =
+            2 * required_frequency[direction] + 2;
+        dimensions[direction] =
+            next_fft_friendly_even_size(minimum_size);
+    }
+    return dimensions;
+}
+
 SinglePointResult run_single_point(
     const AtomicStructure& structure,
     const CalculationConfig& config,
@@ -89,11 +156,6 @@ SinglePointResult run_single_point(
         structure.lattice_bohr.col(0),
         structure.lattice_bohr.col(1),
         structure.lattice_bohr.col(2)
-    );
-    const FFTGrid grid(
-        config.fft_grid[0],
-        config.fft_grid[1],
-        config.fft_grid[2]
     );
 
     std::vector<UPFData> upfs;
@@ -137,7 +199,6 @@ SinglePointResult run_single_point(
         : (recommended_cutoff_hartree > 0.0
             ? recommended_cutoff_hartree
             : 10.0);
-    FFTWorkspace fft(grid);
 
     std::vector<UPFLocalSpecies> local_species;
     std::vector<UPFNonlocalSpecies> nonlocal_species;
@@ -234,7 +295,6 @@ SinglePointResult run_single_point(
         const Eigen::Vector3d k_cart =
             lattice.B * input_point.frac_position;
         point.basis.generate(lattice, k_cart, ecut_hartree);
-        require_fft_grid_for_basis_products(point.basis, grid);
         if (point.basis.size() < options.nbands) {
             throw std::runtime_error(
                 "The plane-wave basis at k point " + std::to_string(ik)
@@ -255,6 +315,35 @@ SinglePointResult run_single_point(
         kpoint_hamiltonians.push_back(std::move(point));
     }
 
+    const bool automatic_fft_grid =
+        config.fft_grid[0] == 0 &&
+        config.fft_grid[1] == 0 &&
+        config.fft_grid[2] == 0;
+    const bool explicit_fft_grid =
+        config.fft_grid[0] > 0 &&
+        config.fft_grid[1] > 0 &&
+        config.fft_grid[2] > 0;
+    if (!automatic_fft_grid && !explicit_fft_grid) {
+        throw std::runtime_error(
+            "fft_grid must be either auto or three positive dimensions."
+        );
+    }
+
+    std::array<int, 3> fft_dimensions = config.fft_grid;
+    if (automatic_fft_grid) {
+        fft_dimensions =
+            automatic_fft_grid_dimensions(kpoint_hamiltonians);
+    }
+    const FFTGrid grid(
+        fft_dimensions[0],
+        fft_dimensions[1],
+        fft_dimensions[2]
+    );
+    for (const KPointHamiltonian& point : kpoint_hamiltonians) {
+        require_fft_grid_for_basis_products(point.basis, grid);
+    }
+    FFTWorkspace fft(grid);
+
     if (log_stream && print_setup) {
         *log_stream
             << "\n"
@@ -273,11 +362,15 @@ SinglePointResult run_single_point(
             << "    NBANDS = " << options.nbands
             << "    NSPIN = " << options.nspin
             << "    ENCUT = " << ecut_hartree << " Ha\n"
+            << "  FFT grid = "
+            << (automatic_fft_grid ? "automatic" : "explicit") << "\n"
             << "  KPOINTS = " << config.kpoints.description
             << "    NKPTS = " << config.kpoints.points.size()
             << "    NPROJ(radial) = " << radial_projector_count << "\n"
             << "  EDIFF  = " << options.energy_tolerance
-            << "    EDIFFRHO = " << options.density_tolerance << "\n"
+            << " Ha (applied to |dE| and |d eps|)\n"
+            << "  DAV density reference = "
+            << options.density_tolerance << "\n"
             << "  XC     = " << lda_functional_name(options.lda_functional)
             << "    LibXC " << libxc_runtime_version();
         if (options.nspin == 2) {
@@ -436,6 +529,7 @@ SinglePointResult run_single_point(
     SinglePointResult result;
     result.converged = scf.converged;
     result.ecut_hartree = ecut_hartree;
+    result.fft_grid = fft_dimensions;
     result.plane_wave_count = maximum_plane_wave_count;
     result.radial_projector_count = radial_projector_count;
     result.expanded_projector_count = expanded_projector_count;

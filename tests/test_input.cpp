@@ -175,6 +175,10 @@ int main() {
             data_path("general_relax.in")
         );
         require_true(
+            relax_config.fft_grid == std::array<int, 3>{{0, 0, 0}},
+            "fft_grid = auto parsing mismatch"
+        );
+        require_true(
             relax_config.calculation == CalculationType::Relax,
             "relax calculation parsing mismatch"
         );
@@ -203,6 +207,12 @@ int main() {
             0.20,
             1.0e-16,
             "initial BFGS curvature parsing"
+        );
+        require_close(
+            relax_config.scf.energy_tolerance,
+            1.0e-6,
+            0.0,
+            "default VASP-style EDIFF"
         );
         require_true(
             relax_config.relaxation.contcar_path == "test.CONTCAR" &&

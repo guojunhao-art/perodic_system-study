@@ -826,6 +826,8 @@ KPointSCFResult run_kpoint_scf(
         const double signed_band_energy_change = iteration == 0
             ? 0.0
             : band_energy - previous_band_energy;
+        const double band_energy_change =
+            std::abs(signed_band_energy_change);
         const double density_residual = spin_density_residual(
             spin_densities, spin_density_output, dV
         );
@@ -853,6 +855,7 @@ KPointSCFResult run_kpoint_scf(
         result.iterations = iteration + 1;
         result.final_density_residual = density_residual;
         result.final_energy_change = energy_change;
+        result.final_band_energy_change = band_energy_change;
         result.final_eigensolver_tolerance = eigensolver_tolerance;
         result.kpoints = std::move(electronic_states);
         result.occupations = occupations;
@@ -925,8 +928,11 @@ KPointSCFResult run_kpoint_scf(
         }
 
         const bool outer_converged = iteration > 0 &&
-            density_residual < options.density_tolerance &&
-            energy_change < options.energy_tolerance;
+            scf_energy_changes_converged(
+                signed_energy_change,
+                signed_band_energy_change,
+                options.energy_tolerance
+            );
         if (outer_converged &&
             eigensolver_tolerances.at_final_tolerance()) {
             result.converged = true;

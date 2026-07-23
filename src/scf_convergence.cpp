@@ -4,6 +4,19 @@
 #include <cmath>
 #include <stdexcept>
 
+bool scf_energy_changes_converged(
+    double total_energy_change,
+    double band_energy_change,
+    double energy_tolerance) noexcept {
+
+    return std::isfinite(total_energy_change)
+        && std::isfinite(band_energy_change)
+        && std::isfinite(energy_tolerance)
+        && energy_tolerance > 0.0
+        && std::abs(total_energy_change) < energy_tolerance
+        && std::abs(band_energy_change) < energy_tolerance;
+}
+
 EigensolverToleranceSchedule::EigensolverToleranceSchedule(
     double initial_tolerance,
     double final_tolerance,

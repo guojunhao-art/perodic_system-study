@@ -14,6 +14,9 @@
 
 namespace {
 
+constexpr double bfgs_curvature_tolerance = 1.0e-8;
+constexpr double energy_increase_tolerance_ha = 1.0e-8;
+
 struct DegreeOfFreedom {
     int atom = 0;
     int basis_index = 0;
@@ -458,7 +461,7 @@ RelaxationResult run_fixed_cell_relaxation(
             trial = evaluator(trial_structure, accepted_guess);
             if (trial.converged &&
                 trial.scf.variational_energy <= previous_energy
-                    + options.energy_increase_tolerance_ha) {
+                    + energy_increase_tolerance_ha) {
                 accepted = true;
                 accepted_backtracks = backtrack;
                 break;
@@ -490,7 +493,7 @@ RelaxationResult run_fixed_cell_relaxation(
             actual_step.norm() * gradient_change.norm();
         if (std::isfinite(curvature) &&
             curvature >
-                options.curvature_tolerance * curvature_scale) {
+                bfgs_curvature_tolerance * curvature_scale) {
             const double rho = 1.0 / curvature;
             const Eigen::MatrixXd identity =
                 Eigen::MatrixXd::Identity(variable_count, variable_count);

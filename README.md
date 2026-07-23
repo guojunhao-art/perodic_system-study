@@ -118,8 +118,8 @@ Gaussian 宽度（Bohr）构造局域势，打印短程尾部和若干 $G$ 点�
 ### 1.2 POSCAR 与通用单点输入
 
 `pwdft` 将结构和数值参数分成两个文件。POSCAR 负责晶胞、元素、坐标及可选的
-`Selective dynamics` 标记；`key = value` 计算文件负责赝势映射、cutoff、FFT 网格、
-占据和收敛参数：
+`Selective dynamics` 标记；`key = value` 计算文件负责赝势映射、cutoff、占据和
+收敛参数。FFT 网格默认自动生成，也可显式覆盖：
 
 ```bash
 make pwdft
@@ -137,20 +137,38 @@ structure = POSCAR
 pseudo = Si pseudopotentials/Si.pz-vbc.UPF
 pseudo = H  pseudopotentials/H.pz-vbc.UPF
 ecut_ha = 10.0
-fft_grid = 48 48 48
+fft_grid = auto
 kpoints = gamma
 ```
 
-Davidson 内层求解默认从较松的阈值开始，并随 SCF 密度残差逐渐收紧：
+省略 `fft_grid` 与写成 `fft_grid = auto` 等价。程序先为所有实际 k 点生成
+截断平面波基组，再统计波函数频率及其两两频率差所需的最大整数频率。每个方向
+采用严格避开 Nyquist 边界的最小尺寸，并向上舍入到仅含 2、3、5 质因子的偶数，
+以兼顾无混叠和 FFT 效率。例如 12 Å 立方晶胞中的 10 Ha H 原子自动选择
+$72^3$。仍可用 `fft_grid = 72 72 72` 显式固定网格；若尺寸不足，程序会报错。
+
+外层 SCF 使用与 VASP `EDIFF` 类似的双能量判据：
+
+$$
+|dE|<\mathrm{EDIFF},\qquad |d\varepsilon|<\mathrm{EDIFF},
+$$
+
+其中 $dE$ 是变分总能变化，$d\varepsilon$ 是占据加权带能变化；二者共用
+`energy_tolerance_ha`，默认值为 $10^{-6}$ Ha。`rms(c)` 只保留为密度残差诊断，
+不再参与 SCF 退出判断。
+
+Davidson 内层求解默认从较松的阈值开始，并随 `rms(c)` 逐渐收紧：
 
 ```text
 density_tolerance = 1.0e-7
+energy_tolerance_ha = 1.0e-6
 eigensolver_initial_tolerance_ha = 1.0e-7
 eigensolver_tolerance_ha = 2.0e-10
 ```
 
-其中 `eigensolver_tolerance_ha` 始终是最终精度。即使密度和能量已经满足外层
-收敛条件，程序也会用该阈值再完成一次 Davidson 精修后才退出。把 initial 与
+这里 `density_tolerance` 只是调节 Davidson 精度的参考尺度，不是外层收敛限；
+`eigensolver_tolerance_ha` 始终是最终精度。即使 $dE$ 和 $d\varepsilon$ 已满足
+外层条件，程序也会用该阈值再完成一次 Davidson 精修后才退出。把 initial 与
 final 设成相同数值即可恢复固定容差。
 
 POSCAR 按标准 VASP 单位解释：晶格和 Cartesian 坐标为 Å，读入后自动转换为 Bohr；
@@ -281,14 +299,13 @@ max_backtracks = 5
 force_tolerance_ha_bohr = 2.0e-4
 max_step_angstrom = 0.05
 bfgs_initial_curvature_ha_bohr2 = 0.10
-bfgs_curvature_tolerance = 1.0e-8
-energy_increase_tolerance_ha = 1.0e-8
 contcar = CONTCAR
 trajectory = si8_relaxation.xyz
 ```
 
 实现使用完整逆 Hessian BFGS，并包含最大原子位移限制、非下降方向重置、曲率
-检查和能量上升时的二分缩步。所有原子完全自由时，会投影掉三个整体平移零模；
+检查和能量上升时的二分缩步。曲率除法保护阈值与允许的 SCF 能量噪声均作为内部
+$10^{-8}$ 常量，不再暴露为输入参数。所有原子完全自由时，会投影掉三个整体平移零模；
 存在选择性约束时不做这一投影。`Selective dynamics` 保留 POSCAR 的
 坐标语义：Cartesian 输入的 `T/F` 约束笛卡尔方向，Direct 输入则约束相应晶格
 方向；后者会先正交化为同一允许位移子空间，再交给 BFGS。每个接受步都会更新当前
@@ -364,7 +381,9 @@ DAV:   8    -0.3167089E+02        -0.1234E-07    -0.3921E-06    180   0.241E-08 
 $\sum_{\sigma\mathbf kn}w_{\mathbf k}f_{\sigma n\mathbf k}
 \varepsilon_{\sigma n\mathbf k}$ 的变化；`ncg` 是本轮实际 $H\psi$ 次数；`rms`
 是全部已求解能带的 Davidson 残差均方根；`rms(c)` 是输入和输出密度之差的
-范数。自旋计算同时检查电荷密度与磁化密度残差，并取较大者。末尾还会给出累计
+范数。自旋计算对电荷密度与磁化密度残差取较大者；该值用于诊断和调整下一轮
+Davidson 精度，但不参与外层收敛判断。只有 `|dE|` 和 `|d eps|` 同时小于
+`energy_tolerance_ha` 才满足外层判据。末尾还会给出累计
 `N_Hpsi`、`N_Hblock`、Davidson 迭代/重启数、`Hpsi_time`、子空间对角化时间和
 SCF 总时间。平均 block 宽度可由 `N_Hpsi/N_Hblock` 估计。
 `h2_opt` 的每个几何点也会显示 `N_Hpsi`、`N_Hblock`、$H\psi$ 耗时与 SCF 耗时。
@@ -738,8 +757,8 @@ $$
 \right].
 $$
 
-当密度和能量第一次同时达标但 $\tau_n>\tau_f$ 时，下一轮直接切换到 $\tau_f$；
-只有这次严格求解后外层条件仍然成立，SCF 才被标记为收敛。最终
+当 $|dE|$ 和 $|d\varepsilon|$ 第一次同时达标但 $\tau_n>\tau_f$ 时，下一轮直接
+切换到 $\tau_f$；只有这次严格求解后两个能量判据仍然成立，SCF 才被标记为收敛。最终
 `eigensolver work` 摘要仍会报告累计工作量；`verbosity = detailed` 额外打印
 本轮 `eig_tol` 和最大能带残差。
 

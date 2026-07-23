@@ -374,6 +374,8 @@ SCFResult run_scf(
         const double signed_band_energy_change = iter == 0
             ? 0.0
             : band_energy - previous_band_energy;
+        const double band_energy_change =
+            std::abs(signed_band_energy_change);
         const double drho = pulay_mix_density(
             pulay,
             rho,
@@ -385,6 +387,7 @@ SCFResult run_scf(
         result.iterations = iter + 1;
         result.final_density_residual = drho;
         result.final_energy_change = dE;
+        result.final_band_energy_change = band_energy_change;
         result.final_eigensolver_tolerance = eigensolver_tolerance;
         result.eigenvalues = ks.eigenvalues;
         result.orbitals = orbitals;
@@ -430,8 +433,11 @@ SCFResult run_scf(
         }
 
         const bool outer_converged = iter > 0 &&
-            drho < options.density_tolerance &&
-            dE < options.energy_tolerance;
+            scf_energy_changes_converged(
+                signed_dE,
+                signed_band_energy_change,
+                options.energy_tolerance
+            );
         if (outer_converged &&
             eigensolver_tolerances.at_final_tolerance()) {
             result.converged = true;

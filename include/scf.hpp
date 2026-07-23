@@ -34,8 +34,12 @@ struct SCFOptions {
     double degeneracy_tolerance = 1.0e-8;
 
     int max_iterations = 200;
+    /*
+     * density_tolerance controls only the adaptive Davidson tolerance
+     * schedule. SCF convergence itself is decided from dE and d eps.
+     */
     double density_tolerance = 1.0e-7;
-    double energy_tolerance = 1.0e-9;
+    double energy_tolerance = 1.0e-6;
 
     int eigensolver_max_iterations = 80;
     int eigensolver_max_subspace = 0;
@@ -69,6 +73,7 @@ struct SCFResult {
     int iterations = 0;
     double final_density_residual = 0.0;
     double final_energy_change = 0.0;
+    double final_band_energy_change = 0.0;
     double final_eigensolver_tolerance = 0.0;
 
     Eigen::VectorXd eigenvalues;
@@ -126,6 +131,7 @@ struct KPointSCFResult {
     int iterations = 0;
     double final_density_residual = 0.0;
     double final_energy_change = 0.0;
+    double final_band_energy_change = 0.0;
     double final_eigensolver_tolerance = 0.0;
 
     std::vector<KPointElectronicState> kpoints;

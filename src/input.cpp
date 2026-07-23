@@ -517,18 +517,24 @@ CalculationConfig read_calculation_config(const std::string& path) {
                 require_positive(config.ecut_hartree, "ecut_ha");
             }
         } else if (key == "fft_grid") {
-            const auto fields = tokens(value);
-            if (fields.size() != 3) {
-                throw std::runtime_error("fft_grid requires three integers.");
-            }
-            for (int direction = 0; direction < 3; ++direction) {
-                config.fft_grid[direction] = parse_integer(
-                    fields[direction], "fft_grid"
-                );
-                if (config.fft_grid[direction] < 4) {
+            if (lowercase(value) == "auto") {
+                config.fft_grid = {{0, 0, 0}};
+            } else {
+                const auto fields = tokens(value);
+                if (fields.size() != 3) {
                     throw std::runtime_error(
-                        "Each fft_grid dimension must be at least 4."
+                        "fft_grid requires 'auto' or three integers."
                     );
+                }
+                for (int direction = 0; direction < 3; ++direction) {
+                    config.fft_grid[direction] = parse_integer(
+                        fields[direction], "fft_grid"
+                    );
+                    if (config.fft_grid[direction] < 4) {
+                        throw std::runtime_error(
+                            "Each fft_grid dimension must be at least 4."
+                        );
+                    }
                 }
             }
         } else if (key == "ewald_width_bohr") {
@@ -625,12 +631,6 @@ CalculationConfig read_calculation_config(const std::string& path) {
         } else if (key == "bfgs_initial_curvature_ha_bohr2") {
             config.relaxation.initial_curvature_ha_bohr2 =
                 parse_double(value, key);
-        } else if (key == "bfgs_curvature_tolerance") {
-            config.relaxation.curvature_tolerance =
-                parse_double(value, key);
-        } else if (key == "energy_increase_tolerance_ha") {
-            config.relaxation.energy_increase_tolerance_ha =
-                parse_double(value, key);
         } else if (key == "contcar") {
             config.relaxation.contcar_path =
                 lowercase(value) == "none" ? "" : value;
@@ -712,13 +712,6 @@ CalculationConfig read_calculation_config(const std::string& path) {
         }
     }
 
-    if (config.fft_grid[0] == 0 ||
-        config.fft_grid[1] == 0 ||
-        config.fft_grid[2] == 0) {
-        throw std::runtime_error(
-            "fft_grid must be specified explicitly in the calculation input."
-        );
-    }
     if (config.pseudopotential_paths.empty()) {
         throw std::runtime_error(
             "At least one pseudo = ELEMENT PATH mapping is required."
@@ -805,18 +798,6 @@ CalculationConfig read_calculation_config(const std::string& path) {
         config.relaxation.initial_curvature_ha_bohr2,
         "bfgs_initial_curvature_ha_bohr2"
     );
-    require_positive(
-        config.relaxation.curvature_tolerance,
-        "bfgs_curvature_tolerance"
-    );
-    if (!std::isfinite(
-            config.relaxation.energy_increase_tolerance_ha
-        ) ||
-        config.relaxation.energy_increase_tolerance_ha < 0.0) {
-        throw std::runtime_error(
-            "energy_increase_tolerance_ha must be finite and non-negative."
-        );
-    }
     if (config.scf.occupation_mode == OccupationMode::FermiDirac &&
         config.scf.smearing_sigma <= 0.0) {
         throw std::runtime_error(

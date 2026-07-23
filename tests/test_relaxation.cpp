@@ -117,7 +117,6 @@ void test_selective_dynamics_and_warm_start() {
     config.relaxation.force_tolerance_ha_bohr = 1.0e-11;
     config.relaxation.max_step_angstrom = 1.0;
     config.relaxation.initial_curvature_ha_bohr2 = 0.5;
-    config.relaxation.energy_increase_tolerance_ha = 0.0;
     config.relaxation.contcar_path.clear();
     config.relaxation.trajectory_path.clear();
 
@@ -188,7 +187,6 @@ void test_energy_backtracking() {
     config.relaxation.max_step_angstrom = 20.0 / ANGSTROM_TO_BOHR;
     config.relaxation.initial_curvature_ha_bohr2 = 0.10;
     config.relaxation.max_backtracks = 6;
-    config.relaxation.energy_increase_tolerance_ha = 0.0;
     config.relaxation.contcar_path.clear();
     config.relaxation.trajectory_path.clear();
 

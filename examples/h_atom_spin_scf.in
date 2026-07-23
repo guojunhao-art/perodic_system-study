@@ -5,7 +5,7 @@ xc = pz_lda
 kpoints = gamma
 
 ecut_ha = 10.0
-fft_grid = 36 36 36
+fft_grid = auto
 ewald_width_bohr = 0.70
 
 nelect = auto
@@ -16,7 +16,7 @@ occupations = zero_t
 
 scf_max_iterations = 200
 density_tolerance = 1.0e-7
-energy_tolerance_ha = 1.0e-9
+energy_tolerance_ha = 1.0e-6
 eigensolver_max_iterations = 80
 eigensolver_initial_tolerance_ha = 1.0e-7
 eigensolver_tolerance_ha = 2.0e-10

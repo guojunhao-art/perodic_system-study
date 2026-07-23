@@ -26,7 +26,8 @@ SinglePointResult run_single_point(
     const AtomicStructure& structure,
     const CalculationConfig& config,
     std::ostream* log_stream = nullptr,
-    const KPointSCFInitialGuess& initial_guess = {});
+    const KPointSCFInitialGuess& initial_guess = {},
+    bool print_setup = true);
 
 void print_single_point_result(
     std::ostream& out,

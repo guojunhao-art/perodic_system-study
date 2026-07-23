@@ -75,7 +75,8 @@ SinglePointResult run_single_point(
     const AtomicStructure& structure,
     const CalculationConfig& config,
     std::ostream* log_stream,
-    const KPointSCFInitialGuess& initial_guess) {
+    const KPointSCFInitialGuess& initial_guess,
+    bool print_setup) {
 
     if (structure.atoms.empty()) {
         throw std::runtime_error("The structure contains no atoms.");
@@ -241,7 +242,7 @@ SinglePointResult run_single_point(
         kpoint_hamiltonians.push_back(std::move(point));
     }
 
-    if (log_stream) {
+    if (log_stream && print_setup) {
         *log_stream
             << "\n"
             << " PWDFT: POSCAR multi-k-point NC-UPF calculation\n"

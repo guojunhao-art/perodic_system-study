@@ -255,7 +255,9 @@ $10^{-2}$、$5\times10^{-3}$ 和 $2\times10^{-3}$ Bohr；最后一个命令行�
 通用驱动支持 `calculation = relax`。优化变量是可移动原子的笛卡尔坐标，梯度取
 Mermin 自由能 `TOTEN` 的导数，即解析力的负值。相邻离子步直接复用上一步的密度
 和每个 k 点所属 MPI rank 上的轨道；固定晶胞下平面波基组不变，因此不需要轨道
-插值。
+插值。体系信息和 k 点列表只在弛豫开始时输出一次；SCF 逐轮诊断默认隐藏，如需
+查看可显式设置 `verbosity = compact` 或 `verbosity = detailed`。紧凑 SCF
+摘要中 `F=` 左侧的整数是该次电子计算实际完成的 SCF 轮数。
 
 ```bash
 make pwdft
@@ -292,9 +294,12 @@ trajectory = si8_relaxation.xyz
 
 ```text
 ION:    3  F= ...  dF= ...  max|force|= ...  SCF= ...
+     search= BFGS  dE(linear)= ...  max|dR|= ... Angstrom
 ```
 
-这里的 `F` 是有限电子温度变分自由能，不是 `energy(sigma->0)`。可用
+这里的 `F` 是有限电子温度变分自由能，不是 `energy(sigma->0)`；`dF` 是接受步的
+实际能量变化，`dE(linear)` 是旧梯度沿实际位移给出的线性预测，`max|dR|` 是任一
+原子的最大笛卡尔位移。可用
 [`examples/si8_displaced_qe_mp2_relax.in`](examples/si8_displaced_qe_mp2_relax.in)
 进行 Quantum ESPRESSO 固定晶胞 BFGS 对照；QE 的
 `forc_conv_thr = 4.0d-4` Ry/Bohr 对应本程序的

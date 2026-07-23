@@ -24,7 +24,6 @@ mixing_alpha = 0.10
 pulay_max_history = 8
 pulay_min_history = 2
 pulay_regularization = 1.0e-12
-verbosity = compact
 
 ion_algorithm = bfgs
 max_ionic_steps = 30

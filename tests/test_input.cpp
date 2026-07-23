@@ -173,6 +173,10 @@ int main() {
             relax_config.calculation == CalculationType::Relax,
             "relax calculation parsing mismatch"
         );
+        require_true(
+            relax_config.scf.verbosity == SCFVerbosity::Silent,
+            "SCF diagnostics should be silent by default"
+        );
         require_true(relax_config.relaxation.max_ionic_steps == 37,
                      "max_ionic_steps parsing mismatch");
         require_true(relax_config.relaxation.max_backtracks == 4,

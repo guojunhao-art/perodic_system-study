@@ -203,21 +203,48 @@ KPointSCFInitialGuess make_initial_guess(
     return guess;
 }
 
+const char* search_direction_name(IonicSearchDirection direction) {
+    switch (direction) {
+    case IonicSearchDirection::None:
+        return "none";
+    case IonicSearchDirection::InitialHessian:
+        return "initial-Hessian";
+    case IonicSearchDirection::BFGS:
+        return "BFGS";
+    case IonicSearchDirection::SteepestDescentReset:
+        return "steepest-descent(reset)";
+    }
+    return "unknown";
+}
+
 void print_ionic_step(
     std::ostream& out,
     const IonicStepSummary& summary) {
 
+    const auto flags = out.flags();
+    const auto precision = out.precision();
     out << " ION: " << std::setw(4) << summary.step
         << std::scientific << std::setprecision(12)
         << "  F= " << std::setw(20) << summary.free_energy_ha
         << "  dF= " << std::setw(14) << summary.energy_change_ha
         << "  max|force|= " << std::setw(13)
         << summary.maximum_force_ha_bohr
-        << "  SCF= " << std::setw(3) << summary.scf_iterations;
-    if (summary.backtracks > 0) {
-        out << "  backtracks= " << summary.backtracks;
+        << "  SCF= " << std::setw(3) << summary.scf_iterations
+        << "\n";
+    if (summary.search_direction != IonicSearchDirection::None) {
+        out << "       search= "
+            << search_direction_name(summary.search_direction)
+            << "  dE(linear)= " << std::setw(13)
+            << summary.linear_energy_change_ha
+            << "  max|dR|= " << std::setw(13)
+            << summary.maximum_displacement_angstrom << " Angstrom";
+        if (summary.backtracks > 0) {
+            out << "  backtracks= " << summary.backtracks;
+        }
+        out << "\n";
     }
-    out << "\n";
+    out.flags(flags);
+    out.precision(precision);
 }
 
 void reset_trajectory_collective(const std::string& path) {
@@ -259,8 +286,14 @@ void append_xyz(
         << "step=" << summary.step
         << " free_energy_ha=" << std::setprecision(16)
         << summary.free_energy_ha
+        << " energy_change_ha=" << summary.energy_change_ha
         << " max_force_ha_bohr="
-        << summary.maximum_force_ha_bohr << "\n";
+        << summary.maximum_force_ha_bohr
+        << " max_displacement_angstrom="
+        << summary.maximum_displacement_angstrom
+        << " scf_iterations=" << summary.scf_iterations
+        << " search=" << search_direction_name(summary.search_direction)
+        << "\n";
     for (const StructureAtom& atom : structure.atoms) {
         const Eigen::Vector3d position_angstrom =
             structure.lattice_bohr * atom.frac_position
@@ -332,6 +365,7 @@ RelaxationResult run_fixed_cell_relaxation(
     Eigen::MatrixXd inverse_hessian =
         Eigen::MatrixXd::Identity(variable_count, variable_count)
         / options.initial_curvature_ha_bohr2;
+    bool has_bfgs_curvature = false;
 
     RelaxationResult result;
     result.structure = initial_structure;
@@ -379,6 +413,10 @@ RelaxationResult run_fixed_cell_relaxation(
     for (int ionic_step = 1;
          ionic_step <= options.max_ionic_steps;
          ++ionic_step) {
+        IonicSearchDirection search_direction =
+            has_bfgs_curvature
+            ? IonicSearchDirection::BFGS
+            : IonicSearchDirection::InitialHessian;
         Eigen::VectorXd direction = -inverse_hessian * gradient;
         const double norm_product = direction.norm() * gradient.norm();
         if (!direction.allFinite() ||
@@ -386,7 +424,10 @@ RelaxationResult run_fixed_cell_relaxation(
                 -std::numeric_limits<double>::epsilon() * norm_product) {
             inverse_hessian.setIdentity();
             inverse_hessian /= options.initial_curvature_ha_bohr2;
+            has_bfgs_curvature = false;
             direction = -inverse_hessian * gradient;
+            search_direction =
+                IonicSearchDirection::SteepestDescentReset;
         }
 
         limit_maximum_atomic_step(
@@ -429,6 +470,14 @@ RelaxationResult run_fixed_cell_relaxation(
             break;
         }
 
+        const double linear_energy_change =
+            gradient.dot(actual_step);
+        const double maximum_displacement_angstrom =
+            maximum_atomic_norm(
+                static_cast<int>(result.structure.atoms.size()),
+                degrees,
+                actual_step
+            ) / ANGSTROM_TO_BOHR;
         Eigen::VectorXd trial_gradient = projected_gradient(
             trial_structure, degrees, trial.forces.total
         );
@@ -454,6 +503,9 @@ RelaxationResult run_fixed_cell_relaxation(
             if (!inverse_hessian.allFinite()) {
                 inverse_hessian.setIdentity();
                 inverse_hessian /= options.initial_curvature_ha_bohr2;
+                has_bfgs_curvature = false;
+            } else {
+                has_bfgs_curvature = true;
             }
         }
 
@@ -472,8 +524,12 @@ RelaxationResult run_fixed_cell_relaxation(
         summary.energy_change_ha =
             current.scf.variational_energy - previous_energy;
         summary.maximum_force_ha_bohr = maximum_force;
+        summary.maximum_displacement_angstrom =
+            maximum_displacement_angstrom;
+        summary.linear_energy_change_ha = linear_energy_change;
         summary.scf_iterations = current.scf.iterations;
         summary.backtracks = accepted_backtracks;
+        summary.search_direction = search_direction;
         result.history.push_back(summary);
         result.ionic_steps = ionic_step;
         if (log_stream) {
@@ -505,12 +561,19 @@ RelaxationResult run_fixed_cell_relaxation(
     const CalculationConfig& config,
     std::ostream* log_stream) {
 
+    bool print_setup = true;
     const FixedCellEvaluator evaluator =
-        [&config, log_stream](
+        [&config, log_stream, &print_setup](
             const AtomicStructure& structure,
             const KPointSCFInitialGuess& initial_guess) {
+            const bool print_this_setup = print_setup;
+            print_setup = false;
             return run_single_point(
-                structure, config, log_stream, initial_guess
+                structure,
+                config,
+                log_stream,
+                initial_guess,
+                print_this_setup
             );
         };
     return run_fixed_cell_relaxation(

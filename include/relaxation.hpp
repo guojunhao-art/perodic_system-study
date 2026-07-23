@@ -8,13 +8,23 @@
 #include <string>
 #include <vector>
 
+enum class IonicSearchDirection {
+    None,
+    InitialHessian,
+    BFGS,
+    SteepestDescentReset
+};
+
 struct IonicStepSummary {
     int step = 0;
     double free_energy_ha = 0.0;
     double energy_change_ha = 0.0;
     double maximum_force_ha_bohr = 0.0;
+    double maximum_displacement_angstrom = 0.0;
+    double linear_energy_change_ha = 0.0;
     int scf_iterations = 0;
     int backtracks = 0;
+    IonicSearchDirection search_direction = IonicSearchDirection::None;
 };
 
 struct RelaxationResult {

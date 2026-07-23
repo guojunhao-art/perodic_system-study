@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -121,12 +122,14 @@ void test_selective_dynamics_and_warm_start() {
     config.relaxation.trajectory_path.clear();
 
     bool warm_start_seen = false;
+    std::ostringstream log;
     const RelaxationResult result = run_fixed_cell_relaxation(
         structure,
         config,
         harmonic_evaluator(
             reference_positions, 0.5, warm_start_seen
-        )
+        ),
+        &log
     );
 
     require_true(result.converged, "Selective-dynamics BFGS did not converge");
@@ -134,6 +137,25 @@ void test_selective_dynamics_and_warm_start() {
                  "Exact harmonic inverse Hessian should converge in one step");
     require_true(warm_start_seen,
                  "The accepted electronic state was not used as a warm start");
+    require_true(
+        result.history[1].search_direction ==
+            IonicSearchDirection::InitialHessian,
+        "The first search direction was not reported as initial-Hessian"
+    );
+    const Eigen::Vector3d movable_initial_displacement(
+        initial_displacement[0], 0.0, initial_displacement[2]
+    );
+    require_close(
+        result.history[1].maximum_displacement_angstrom,
+        movable_initial_displacement.norm() / ANGSTROM_TO_BOHR,
+        1.0e-12,
+        "Maximum accepted atomic displacement"
+    );
+    require_true(
+        log.str().find("search= initial-Hessian") != std::string::npos &&
+        log.str().find("max|dR|=") != std::string::npos,
+        "Ionic optimization diagnostics were not printed"
+    );
 
     const Eigen::Vector3d final_position =
         result.structure.lattice_bohr
@@ -184,6 +206,11 @@ void test_energy_backtracking() {
                  "Backtracking test has too few accepted points");
     require_true(result.history[1].backtracks == 3,
                  "The uphill BFGS trial was not backtracked three times");
+    require_true(
+        result.history[2].search_direction ==
+            IonicSearchDirection::BFGS,
+        "The second accepted step did not use the BFGS search direction"
+    );
     for (int step = 1; step < static_cast<int>(result.history.size()); ++step) {
         require_true(
             result.history[step].free_energy_ha <=

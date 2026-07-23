@@ -161,7 +161,8 @@ void print_compact_summary(
         result.energy.sigma0_estimate + result.energy.ion_smooth;
 
     out << "--------------------------------------------------------------------------------\n"
-        << "  1 F= " << std::scientific << std::setprecision(12)
+        << " " << std::setw(4) << result.iterations
+        << " F= " << std::scientific << std::setprecision(12)
         << std::setw(20) << free_energy_with_ions
         << " E0= " << std::setw(20) << sigma0_with_ions
         << "  d E = " << std::setprecision(4) << std::setw(12) << signed_dE

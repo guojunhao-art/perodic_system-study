@@ -45,7 +45,7 @@ struct SCFOptions {
     int pulay_min_history = 2;
     double pulay_regularization = 1.0e-12;
 
-    SCFVerbosity verbosity = SCFVerbosity::Compact;
+    SCFVerbosity verbosity = SCFVerbosity::Silent;
 
     /* Used only by Detailed output. */
     int bands_to_print = 8;

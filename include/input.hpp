@@ -27,6 +27,8 @@ struct AtomicStructure {
     Eigen::Matrix3d lattice_bohr = Eigen::Matrix3d::Zero();
     std::vector<std::string> species_order;
     std::vector<StructureAtom> atoms;
+    bool selective_dynamics = false;
+    bool selective_dynamics_cartesian = false;
 };
 
 struct KPoint {
@@ -45,10 +47,37 @@ KPointSet make_uniform_kpoint_mesh(
 
 void normalize_kpoint_weights(KPointSet& kpoints);
 
+enum class CalculationType {
+    SCF,
+    Relax
+};
+
+enum class IonAlgorithm {
+    BFGS
+};
+
+struct RelaxationOptions {
+    IonAlgorithm algorithm = IonAlgorithm::BFGS;
+    int max_ionic_steps = 50;
+    int max_backtracks = 5;
+
+    double force_tolerance_ha_bohr = 2.0e-4;
+    double max_step_angstrom = 0.10;
+    double initial_curvature_ha_bohr2 = 0.10;
+    double curvature_tolerance = 1.0e-8;
+    double energy_increase_tolerance_ha = 1.0e-8;
+
+    std::string contcar_path = "CONTCAR";
+    std::string trajectory_path = "relaxation.xyz";
+};
+
 struct CalculationConfig {
     std::string source_path;
     std::string structure_path;
     std::map<std::string, std::string> pseudopotential_paths;
+
+    CalculationType calculation = CalculationType::SCF;
+    RelaxationOptions relaxation;
 
     double ecut_hartree = 0.0;
     std::array<int, 3> fft_grid{{0, 0, 0}};

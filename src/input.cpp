@@ -389,6 +389,9 @@ AtomicStructure read_poscar(const std::string& path) {
             path + ": POSCAR coordinate mode must be Direct or Cartesian."
         );
     }
+    structure.selective_dynamics = selective_dynamics;
+    structure.selective_dynamics_cartesian =
+        selective_dynamics && cartesian;
 
     structure.atoms.reserve(total_atoms);
     for (int ispecies = 0;
@@ -478,9 +481,14 @@ CalculationConfig read_calculation_config(const std::string& path) {
         }
 
         if (key == "calculation") {
-            if (lowercase(value) != "scf") {
+            const std::string calculation = lowercase(value);
+            if (calculation == "scf") {
+                config.calculation = CalculationType::SCF;
+            } else if (calculation == "relax") {
+                config.calculation = CalculationType::Relax;
+            } else {
                 throw std::runtime_error(
-                    "Only calculation = scf is implemented."
+                    "calculation must be scf or relax."
                 );
             }
         } else if (key == "structure") {
@@ -587,6 +595,40 @@ CalculationConfig read_calculation_config(const std::string& path) {
             config.scf.bands_to_print = parse_integer(value, key);
         } else if (key == "band_print_interval") {
             config.scf.band_print_interval = parse_integer(value, key);
+        } else if (key == "ion_algorithm") {
+            if (lowercase(value) != "bfgs") {
+                throw std::runtime_error(
+                    "Only ion_algorithm = bfgs is implemented."
+                );
+            }
+            config.relaxation.algorithm = IonAlgorithm::BFGS;
+        } else if (key == "max_ionic_steps") {
+            config.relaxation.max_ionic_steps =
+                parse_integer(value, key);
+        } else if (key == "max_backtracks") {
+            config.relaxation.max_backtracks =
+                parse_integer(value, key);
+        } else if (key == "force_tolerance_ha_bohr") {
+            config.relaxation.force_tolerance_ha_bohr =
+                parse_double(value, key);
+        } else if (key == "max_step_angstrom") {
+            config.relaxation.max_step_angstrom =
+                parse_double(value, key);
+        } else if (key == "bfgs_initial_curvature_ha_bohr2") {
+            config.relaxation.initial_curvature_ha_bohr2 =
+                parse_double(value, key);
+        } else if (key == "bfgs_curvature_tolerance") {
+            config.relaxation.curvature_tolerance =
+                parse_double(value, key);
+        } else if (key == "energy_increase_tolerance_ha") {
+            config.relaxation.energy_increase_tolerance_ha =
+                parse_double(value, key);
+        } else if (key == "contcar") {
+            config.relaxation.contcar_path =
+                lowercase(value) == "none" ? "" : value;
+        } else if (key == "trajectory") {
+            config.relaxation.trajectory_path =
+                lowercase(value) == "none" ? "" : value;
         } else if (key == "kpoints") {
             const auto fields = tokens(lowercase(value));
             if (fields.size() == 1 && fields[0] == "gamma") {
@@ -721,6 +763,36 @@ CalculationConfig read_calculation_config(const std::string& path) {
         config.scf.band_print_interval < 0) {
         throw std::runtime_error(
             "Band-output counts and intervals cannot be negative."
+        );
+    }
+    if (config.relaxation.max_ionic_steps <= 0) {
+        throw std::runtime_error("max_ionic_steps must be positive.");
+    }
+    if (config.relaxation.max_backtracks < 0) {
+        throw std::runtime_error("max_backtracks cannot be negative.");
+    }
+    require_positive(
+        config.relaxation.force_tolerance_ha_bohr,
+        "force_tolerance_ha_bohr"
+    );
+    require_positive(
+        config.relaxation.max_step_angstrom,
+        "max_step_angstrom"
+    );
+    require_positive(
+        config.relaxation.initial_curvature_ha_bohr2,
+        "bfgs_initial_curvature_ha_bohr2"
+    );
+    require_positive(
+        config.relaxation.curvature_tolerance,
+        "bfgs_curvature_tolerance"
+    );
+    if (!std::isfinite(
+            config.relaxation.energy_increase_tolerance_ha
+        ) ||
+        config.relaxation.energy_increase_tolerance_ha < 0.0) {
+        throw std::runtime_error(
+            "energy_increase_tolerance_ha must be finite and non-negative."
         );
     }
     if (config.scf.occupation_mode == OccupationMode::FermiDirac &&

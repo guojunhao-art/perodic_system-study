@@ -6,7 +6,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -159,16 +161,19 @@ void test_two_kpoint_scf() {
     options.eigensolver_max_iterations = 30;
     options.eigensolver_tolerance = 1.0e-11;
     options.mixing_alpha = 0.5;
-    options.verbosity = SCFVerbosity::Silent;
+    options.verbosity = SCFVerbosity::Compact;
 
     const std::vector<double> zero_potential(grid.ngrid, 0.0);
+    std::ostringstream log;
     const KPointSCFResult result = run_kpoint_scf(
         lattice,
         kpoints,
         fft,
         zero_potential,
         0.0,
-        options
+        options,
+        {},
+        parallel::is_root() ? &log : nullptr
     );
     if (!result.converged) {
         throw std::runtime_error("Two-k-point jellium SCF did not converge.");
@@ -185,6 +190,17 @@ void test_two_kpoint_scf() {
                   "SCF integrated electron count");
     if (result.kpoints.size() != 2) {
         throw std::runtime_error("SCF did not preserve both k-point states.");
+    }
+    if (parallel::is_root()) {
+        std::ostringstream summary_marker;
+        summary_marker << " " << std::setw(4) << result.iterations
+            << " F= ";
+        if (log.str().find(summary_marker.str()) == std::string::npos) {
+            throw std::runtime_error(
+                "The compact SCF summary did not report the actual "
+                "SCF iteration count."
+            );
+        }
     }
 
     const double shifted_kinetic =

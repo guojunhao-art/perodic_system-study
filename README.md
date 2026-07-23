@@ -25,6 +25,7 @@ Hartree 原子单位。代码保留了许多生产级程序会封装起来的中
 - 无 projector H UPF 的 H₂ 一维键长优化驱动；
 - 真实 Si UPF 的非对称 Si₂ 分项/全 SCF 力验证驱动；
 - POSCAR 结构解析、独立计算参数文件和通用多 k 点单点驱动；
+- 固定晶胞 BFGS 离子弛豫、`Selective dynamics`、SCF 热启动和结构轨迹输出；
 - `upf_info` 文件及局域势检查工具。
 
 `pwdft` 是唯一的主 SCF 程序：它读取计算配置和 POSCAR，并从 NC-UPF 文件构造
@@ -249,7 +250,69 @@ $10^{-2}$、$5\times10^{-3}$ 和 $2\times10^{-3}$ Bohr；最后一个命令行�
 有限电子温度下必须差分 `TOTEN`，不能差分 `energy without entropy` 或
 `energy(sigma->0)`。程序以非零退出码报告任何一项失败。
 
-### 1.5 Davidson 性能诊断
+### 1.5 固定晶胞 BFGS 离子弛豫
+
+通用驱动支持 `calculation = relax`。优化变量是可移动原子的笛卡尔坐标，梯度取
+Mermin 自由能 `TOTEN` 的导数，即解析力的负值。相邻离子步直接复用上一步的密度
+和每个 k 点所属 MPI rank 上的轨道；固定晶胞下平面波基组不变，因此不需要轨道
+插值。体系信息和 k 点列表只在弛豫开始时输出一次；SCF 逐轮诊断默认隐藏，如需
+查看可显式设置 `verbosity = compact` 或 `verbosity = detailed`。紧凑 SCF
+摘要中 `F=` 左侧的整数是该次电子计算实际完成的 SCF 轮数。
+
+```bash
+make pwdft
+./pwdft examples/si8_displaced_mp2_relax.in
+
+# 多 k 点体系优先使用现有的 k 点 MPI
+make pwdft_mpi
+mpiexec -n 8 ./pwdft_mpi examples/si8_displaced_mp2_relax.in
+```
+
+示例从一个原子发生非对称位移的 8 原子金刚石 Si 常规胞出发，先用完整 MP
+$2^3$ 网格降低开发成本。收敛后可把输入改成 MP $4^3$ 进行最终检查。主要离子参数
+为：
+
+```text
+ion_algorithm = bfgs
+max_ionic_steps = 30
+max_backtracks = 5
+force_tolerance_ha_bohr = 2.0e-4
+max_step_angstrom = 0.05
+bfgs_initial_curvature_ha_bohr2 = 0.10
+bfgs_curvature_tolerance = 1.0e-8
+energy_increase_tolerance_ha = 1.0e-8
+contcar = CONTCAR
+trajectory = si8_relaxation.xyz
+```
+
+实现使用完整逆 Hessian BFGS，并包含最大原子位移限制、非下降方向重置、曲率
+检查和能量上升时的二分缩步。所有原子完全自由时，会投影掉三个整体平移零模；
+存在选择性约束时不做这一投影。`Selective dynamics` 保留 POSCAR 的
+坐标语义：Cartesian 输入的 `T/F` 约束笛卡尔方向，Direct 输入则约束相应晶格
+方向；后者会先正交化为同一允许位移子空间，再交给 BFGS。每个接受步都会更新当前
+目录下的 `CONTCAR` 和 XYZ 轨迹，并输出：
+
+```text
+ION:    3  F= ...  dF= ...  max|force|= ...  SCF= ...
+     search= BFGS  dE(linear)= ...  max|dR|= ... Angstrom
+```
+
+这里的 `F` 是有限电子温度变分自由能，不是 `energy(sigma->0)`；`dF` 是接受步的
+实际能量变化，`dE(linear)` 是旧梯度沿实际位移给出的线性预测，`max|dR|` 是任一
+原子的最大笛卡尔位移。可用
+[`examples/si8_displaced_qe_mp2_relax.in`](examples/si8_displaced_qe_mp2_relax.in)
+进行 Quantum ESPRESSO 固定晶胞 BFGS 对照；QE 的
+`forc_conv_thr = 4.0d-4` Ry/Bohr 对应本程序的
+$2.0\times10^{-4}$ Ha/Bohr。
+
+独立的谐振势回归覆盖一步精确 BFGS、固定坐标、SCF 初猜复用和上坡步回退：
+
+```bash
+make test_relaxation
+./test_relaxation
+```
+
+### 1.6 Davidson 性能诊断
 
 高 cutoff 下，基组规模近似按
 
@@ -320,7 +383,7 @@ make test_davidson
 ./test_davidson
 ```
 
-### 1.6 批量 Hamiltonian 与 FFT
+### 1.7 批量 Hamiltonian 与 FFT
 
 `apply_hamiltonian_to_block` 不再逐列调用标量 $H\psi$。对一个含 $m$ 个轨道的 block，
 平面波系数被布置成 $m$ 个连续的三维 reciprocal grids，然后由

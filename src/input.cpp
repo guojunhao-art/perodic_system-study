@@ -548,6 +548,14 @@ CalculationConfig read_calculation_config(const std::string& path) {
                     throw std::runtime_error("nbands must be positive.");
                 }
             }
+        } else if (key == "nspin") {
+            config.scf.nspin = parse_integer(value, key);
+            if (config.scf.nspin != 1 && config.scf.nspin != 2) {
+                throw std::runtime_error("nspin must be 1 or 2.");
+            }
+        } else if (key == "starting_magnetization") {
+            config.scf.starting_magnetization =
+                parse_double(value, key);
         } else if (key == "occupations") {
             config.scf.occupation_mode = parse_occupation_mode(value);
         } else if (key == "fixed_occupations") {
@@ -765,6 +773,20 @@ CalculationConfig read_calculation_config(const std::string& path) {
             "Band-output counts and intervals cannot be negative."
         );
     }
+    if (config.scf.nspin != 1 && config.scf.nspin != 2) {
+        throw std::runtime_error("nspin must be 1 or 2.");
+    }
+    if (!std::isfinite(config.scf.starting_magnetization)) {
+        throw std::runtime_error(
+            "starting_magnetization must be finite."
+        );
+    }
+    if (config.scf.nspin == 1 &&
+        std::abs(config.scf.starting_magnetization) > 1.0e-14) {
+        throw std::runtime_error(
+            "starting_magnetization requires nspin = 2."
+        );
+    }
     if (config.relaxation.max_ionic_steps <= 0) {
         throw std::runtime_error("max_ionic_steps must be positive.");
     }
@@ -805,6 +827,13 @@ CalculationConfig read_calculation_config(const std::string& path) {
         config.scf.fixed_occupations.empty()) {
         throw std::runtime_error(
             "Fixed occupations require fixed_occupations values."
+        );
+    }
+    if (config.scf.nspin == 2 &&
+        config.scf.occupation_mode == OccupationMode::Fixed) {
+        throw std::runtime_error(
+            "Fixed occupations are not yet supported with nspin = 2; "
+            "use zero_t or fermi_dirac occupations."
         );
     }
     if (config.scf.occupation_mode == OccupationMode::Fixed) {

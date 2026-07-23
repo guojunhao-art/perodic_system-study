@@ -145,6 +145,11 @@ int main() {
                      "FFT grid parsing mismatch");
         require_true(!config.nbands_auto && config.scf.nbands == 9,
                      "nbands parsing mismatch");
+        require_true(
+            config.scf.nspin == 2 &&
+            std::abs(config.scf.starting_magnetization - 1.0) < 1.0e-14,
+            "spin-control parsing mismatch"
+        );
         require_true(config.nelect_auto,
                      "automatic nelect parsing mismatch");
         require_true(config.scf.occupation_mode == OccupationMode::FermiDirac,
@@ -174,8 +179,8 @@ int main() {
             "relax calculation parsing mismatch"
         );
         require_true(
-            relax_config.scf.verbosity == SCFVerbosity::Silent,
-            "SCF diagnostics should be silent by default"
+            relax_config.scf.verbosity == SCFVerbosity::Compact,
+            "VASP-style DAV diagnostics should be compact by default"
         );
         require_true(relax_config.relaxation.max_ionic_steps == 37,
                      "max_ionic_steps parsing mismatch");

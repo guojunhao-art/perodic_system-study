@@ -6,6 +6,7 @@
 
 #include <Eigen/Dense>
 
+#include <array>
 #include <iosfwd>
 #include <vector>
 
@@ -22,6 +23,8 @@ enum class SCFVerbosity {
 struct SCFOptions {
     double nelec = 2.0;
     int nbands = 10;
+    int nspin = 1;
+    double starting_magnetization = 0.0;
 
     LDAFunctional lda_functional = LDAFunctional::PerdewZunger;
 
@@ -45,7 +48,7 @@ struct SCFOptions {
     int pulay_min_history = 2;
     double pulay_regularization = 1.0e-12;
 
-    SCFVerbosity verbosity = SCFVerbosity::Silent;
+    SCFVerbosity verbosity = SCFVerbosity::Compact;
 
     /* Used only by Detailed output. */
     int bands_to_print = 8;
@@ -101,6 +104,8 @@ struct KPointHamiltonian {
 };
 
 struct KPointElectronicState {
+    int spin_channel = 0;
+    int kpoint_index = 0;
     Eigen::Vector3d fractional_position = Eigen::Vector3d::Zero();
     double weight = 1.0;
     int owner_rank = 0;
@@ -112,6 +117,7 @@ struct KPointElectronicState {
 
 struct KPointSCFInitialGuess {
     std::vector<double> density;
+    std::vector<std::vector<double>> spin_densities;
     std::vector<Eigen::MatrixXcd> orbitals;
 };
 
@@ -125,6 +131,9 @@ struct KPointSCFResult {
     std::vector<KPointElectronicState> kpoints;
     KPointOccupationResult occupations;
     std::vector<double> density;
+    std::vector<std::vector<double>> spin_densities;
+    std::array<double, 2> spin_electron_counts{{0.0, 0.0}};
+    double magnetization = 0.0;
     EnergyTerms energy;
     double electron_number_from_density = 0.0;
 

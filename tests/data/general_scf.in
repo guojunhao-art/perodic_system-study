@@ -10,6 +10,8 @@ fft_grid = 24 26 28
 ewald_width_bohr = 0.75
 nelect = auto
 nbands = 9
+nspin = 2
+starting_magnetization = 1.0
 occupations = fermi_dirac
 smearing_ev = 0.10
 

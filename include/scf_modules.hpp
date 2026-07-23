@@ -106,7 +106,9 @@ KPointOccupationResult compute_kpoint_occupations(
     OccupationMode mode,
     const std::vector<double>& fixed_occ,
     double sigma,
-    double deg_tol);
+    double deg_tol,
+    double occupation_max = 2.0,
+    double expected_weight_sum = 1.0);
 
 double compute_kinetic_energy(
     const PlaneWaveBasis3D& basis,

@@ -182,10 +182,23 @@ SinglePointResult run_single_point(
     if (config.nelect_auto) {
         options.nelec = automatic_nelect;
     }
+    if (options.nspin == 2 &&
+        std::abs(options.starting_magnetization) >
+            options.nelec + 1.0e-12) {
+        throw std::runtime_error(
+            "starting_magnetization must satisfy |M| <= nelect."
+        );
+    }
     if (config.nbands_auto) {
+        const double majority_electrons = options.nspin == 1
+            ? 0.5 * options.nelec
+            : 0.5 * (
+                options.nelec +
+                std::abs(options.starting_magnetization)
+            );
         options.nbands = std::max(
             8,
-            static_cast<int>(std::ceil(0.5 * options.nelec)) + 4
+            static_cast<int>(std::ceil(majority_electrons)) + 4
         );
     }
     if (options.occupation_mode == OccupationMode::Fixed &&
@@ -258,6 +271,7 @@ SinglePointResult run_single_point(
             << "    NGZ = " << grid.n3 << "\n"
             << "  NELECT = " << options.nelec
             << "    NBANDS = " << options.nbands
+            << "    NSPIN = " << options.nspin
             << "    ENCUT = " << ecut_hartree << " Ha\n"
             << "  KPOINTS = " << config.kpoints.description
             << "    NKPTS = " << config.kpoints.points.size()
@@ -265,7 +279,12 @@ SinglePointResult run_single_point(
             << "  EDIFF  = " << options.energy_tolerance
             << "    EDIFFRHO = " << options.density_tolerance << "\n"
             << "  XC     = " << lda_functional_name(options.lda_functional)
-            << "    LibXC " << libxc_runtime_version() << "\n"
+            << "    LibXC " << libxc_runtime_version();
+        if (options.nspin == 2) {
+            *log_stream << "    MAGMOM(start) = "
+                << options.starting_magnetization << " mu_B";
+        }
+        *log_stream << "\n"
             << "\n  k-point list (reciprocal fractional coordinates):\n";
         for (int ik = 0;
              ik < static_cast<int>(kpoint_hamiltonians.size());
@@ -339,25 +358,35 @@ SinglePointResult run_single_point(
     std::string local_force_error;
     try {
         for (int ik : distribution.local_kpoints()) {
-            if (scf.kpoints[ik].owner_rank != distribution.rank() ||
-                scf.kpoints[ik].orbitals.size() == 0) {
-                throw std::runtime_error(
-                    "The owning rank does not hold orbitals for k point "
-                    + std::to_string(ik) + "."
-                );
-            }
-            const auto force_at_k = compute_nonlocal_ionic_forces(
-                kpoint_hamiltonians[ik].basis,
-                kpoint_hamiltonians[ik].projectors,
-                scf.kpoints[ik].orbitals,
-                scf.kpoints[ik].occupations,
-                static_cast<int>(structure.atoms.size())
-            );
-            for (int iatom = 0;
-                 iatom < static_cast<int>(structure.atoms.size());
-                 ++iatom) {
-                forces.nonlocal[iatom] +=
-                    kpoint_hamiltonians[ik].weight * force_at_k[iatom];
+            for (int spin = 0; spin < options.nspin; ++spin) {
+                const int state =
+                    spin * static_cast<int>(
+                        kpoint_hamiltonians.size()
+                    ) + ik;
+                if (scf.kpoints[state].owner_rank !=
+                        distribution.rank() ||
+                    scf.kpoints[state].orbitals.size() == 0) {
+                    throw std::runtime_error(
+                        "The owning rank does not hold orbitals for spin "
+                        + std::to_string(spin) + ", k point "
+                        + std::to_string(ik) + "."
+                    );
+                }
+                const auto force_at_k =
+                    compute_nonlocal_ionic_forces(
+                        kpoint_hamiltonians[ik].basis,
+                        kpoint_hamiltonians[ik].projectors,
+                        scf.kpoints[state].orbitals,
+                        scf.kpoints[state].occupations,
+                        static_cast<int>(structure.atoms.size())
+                    );
+                for (int iatom = 0;
+                     iatom < static_cast<int>(structure.atoms.size());
+                     ++iatom) {
+                    forces.nonlocal[iatom] +=
+                        kpoint_hamiltonians[ik].weight *
+                        force_at_k[iatom];
+                }
             }
         }
     } catch (const std::exception& error) {
@@ -441,7 +470,15 @@ void print_single_point_result(
         << "  E_NL = " << std::setw(20)
         << result.scf.energy.nonlocal
         << "  E_II(Ewald) = " << std::setw(20)
-        << result.scf.energy.ion_smooth << "\n\n";
+        << result.scf.energy.ion_smooth << "\n";
+    if (result.options_used.nspin == 2) {
+        out << "  number of electron  up/down = "
+            << result.scf.spin_electron_counts[0] << " / "
+            << result.scf.spin_electron_counts[1] << "\n"
+            << "  total magnetization = "
+            << result.scf.magnetization << " mu_B\n";
+    }
+    out << "\n";
 
     out << "  POSITION (Bohr)" << std::setw(45)
         << "TOTAL-FORCE (Ha/Bohr)\n"

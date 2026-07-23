@@ -196,6 +196,7 @@ KPointSCFInitialGuess make_initial_guess(
 
     KPointSCFInitialGuess guess;
     guess.density = result.density;
+    guess.spin_densities = result.spin_densities;
     guess.orbitals.resize(result.kpoints.size());
     for (int ik = 0; ik < static_cast<int>(result.kpoints.size()); ++ik) {
         guess.orbitals[ik] = result.kpoints[ik].orbitals;

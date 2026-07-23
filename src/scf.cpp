@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <iomanip>
+#include <numeric>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
@@ -27,6 +28,12 @@ void validate_scf_inputs(
     }
     if (options.nbands <= 0 || options.nbands > basis.size()) {
         throw std::runtime_error("SCF band count must be in [1, basis size].");
+    }
+    if (options.nspin != 1) {
+        throw std::runtime_error(
+            "The legacy Gamma-only SCF entry point supports only nspin = 1; "
+            "use run_kpoint_scf() for spin polarization."
+        );
     }
     if (static_cast<int>(ionic_potential.size()) != fft.grid.ngrid) {
         throw std::runtime_error("Ionic potential size does not match FFT grid.");
@@ -66,11 +73,9 @@ double maximum_residual(const std::vector<double>& residuals) {
 
 void print_compact_header(std::ostream& out) {
     out << "\n"
-        << "-------------------------------- electronic minimization "
-        << "--------------------------------\n"
-        << "          N                     E              dE"
-        << "        rms(rho)  Niter  N_Hpsi      rms(eig)"
-        << "       eig_tol\n";
+        << "       N       E                     dE"
+        << "             d eps       ncg     rms"
+        << "          rms(c)\n";
 }
 
 void print_compact_iteration(
@@ -78,11 +83,10 @@ void print_compact_iteration(
     int iteration,
     const SCFResult& result,
     double signed_dE,
+    double signed_band_energy_change,
     double drho,
-    int davidson_iterations,
     int hamiltonian_applications,
-    double eigensolver_residual,
-    double eigensolver_tolerance) {
+    double eigensolver_residual) {
 
     const auto old_flags = out.flags();
     const auto old_precision = out.precision();
@@ -91,11 +95,10 @@ void print_compact_iteration(
         << "  " << std::scientific << std::setprecision(12)
         << std::setw(20) << result.variational_energy
         << "  " << std::setprecision(4) << std::setw(12) << signed_dE
-        << "  " << std::setw(12) << drho
-        << "  " << std::setw(5) << davidson_iterations
+        << "  " << std::setw(12) << signed_band_energy_change
         << "  " << std::setw(7) << hamiltonian_applications
         << "  " << std::setw(12) << eigensolver_residual
-        << "  " << std::setw(12) << eigensolver_tolerance
+        << "  " << std::setw(12) << drho
         << "\n";
 
     out.flags(old_flags);
@@ -246,6 +249,7 @@ SCFResult run_scf(
 
     SCFResult result;
     double previous_energy = 0.0;
+    double previous_band_energy = 0.0;
     double last_signed_energy_change = 0.0;
     const bool logging_enabled =
         log_stream != nullptr && options.verbosity != SCFVerbosity::Silent;
@@ -362,6 +366,14 @@ SCFResult run_scf(
             ? 0.0
             : energy_for_convergence - previous_energy;
         const double dE = std::abs(signed_dE);
+        double band_energy = 0.0;
+        for (int ib = 0; ib < options.nbands; ++ib) {
+            band_energy +=
+                occupations.occ[ib] * ks.eigenvalues[ib];
+        }
+        const double signed_band_energy_change = iter == 0
+            ? 0.0
+            : band_energy - previous_band_energy;
         const double drho = pulay_mix_density(
             pulay,
             rho,
@@ -390,11 +402,18 @@ SCFResult run_scf(
                 iter,
                 result,
                 signed_dE,
+                signed_band_energy_change,
                 drho,
-                ks.iterations,
                 ks.hamiltonian_applications,
-                maximum_residual(ks.residual_norms),
-                eigensolver_tolerance
+                std::sqrt(
+                    std::inner_product(
+                        ks.residual_norms.begin(),
+                        ks.residual_norms.end(),
+                        ks.residual_norms.begin(),
+                        0.0
+                    ) /
+                    static_cast<double>(ks.residual_norms.size())
+                )
             );
         } else if (logging_enabled &&
                    options.verbosity == SCFVerbosity::Detailed) {
@@ -435,6 +454,7 @@ SCFResult run_scf(
         }
 
         previous_energy = energy_for_convergence;
+        previous_band_energy = band_energy;
         C_guess = orbitals;
     }
 

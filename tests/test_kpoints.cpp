@@ -128,6 +128,181 @@ void test_global_occupations() {
     if (!(smeared.entropy > 0.0)) {
         throw std::runtime_error("Weighted Fermi-Dirac entropy must be positive.");
     }
+
+    std::vector<Eigen::VectorXd> spin_eigenvalues(2);
+    spin_eigenvalues[0].resize(2);
+    spin_eigenvalues[1].resize(2);
+    spin_eigenvalues[0] << -1.0, 1.0;
+    spin_eigenvalues[1] << 0.0, 2.0;
+    const KPointOccupationResult spin_occupations =
+        compute_kpoint_occupations(
+            spin_eigenvalues,
+            {1.0, 1.0},
+            1.0,
+            OccupationMode::DegeneracyAwareZeroT,
+            {},
+            0.0,
+            1.0e-10,
+            1.0,
+            2.0
+        );
+    require_close(
+        spin_occupations.occupations[0][0],
+        1.0,
+        1.0e-14,
+        "Spin-up state capacity"
+    );
+    require_close(
+        spin_occupations.occupations[1][0],
+        0.0,
+        1.0e-14,
+        "Common-Fermi-level spin-down occupation"
+    );
+    require_close(
+        spin_occupations.nelec_sum,
+        1.0,
+        1.0e-14,
+        "Spin-resolved electron count"
+    );
+}
+
+KPointHamiltonian make_gamma_hamiltonian(
+    const Lattice& lattice,
+    double cutoff) {
+
+    KPointHamiltonian gamma;
+    gamma.weight = 1.0;
+    gamma.basis.generate(
+        lattice, Eigen::Vector3d::Zero(), cutoff
+    );
+    return gamma;
+}
+
+SCFOptions make_zero_temperature_options() {
+    SCFOptions options;
+    options.nelec = 2.0;
+    options.nbands = 2;
+    options.occupation_mode =
+        OccupationMode::DegeneracyAwareZeroT;
+    options.max_iterations = 12;
+    options.density_tolerance = 1.0e-10;
+    options.energy_tolerance = 1.0e-12;
+    options.eigensolver_max_iterations = 40;
+    options.eigensolver_initial_tolerance = 1.0e-11;
+    options.eigensolver_tolerance = 1.0e-11;
+    options.mixing_alpha = 0.5;
+    options.verbosity = SCFVerbosity::Silent;
+    return options;
+}
+
+void test_collinear_spin_scf() {
+    const Lattice lattice(
+        Eigen::Vector3d(8.0, 0.0, 0.0),
+        Eigen::Vector3d(0.0, 8.0, 0.0),
+        Eigen::Vector3d(0.0, 0.0, 8.0)
+    );
+    const FFTGrid grid(12, 12, 12);
+    const KPointHamiltonian gamma =
+        make_gamma_hamiltonian(lattice, 1.5);
+    const std::vector<double> zero_potential(grid.ngrid, 0.0);
+
+    SCFOptions nonspin_options =
+        make_zero_temperature_options();
+    FFTWorkspace nonspin_fft(grid);
+    const KPointSCFResult nonspin = run_kpoint_scf(
+        lattice,
+        {gamma},
+        nonspin_fft,
+        zero_potential,
+        0.0,
+        nonspin_options
+    );
+
+    SCFOptions unpolarized_options = nonspin_options;
+    unpolarized_options.nspin = 2;
+    unpolarized_options.starting_magnetization = 0.0;
+    FFTWorkspace unpolarized_fft(grid);
+    const KPointSCFResult unpolarized = run_kpoint_scf(
+        lattice,
+        {gamma},
+        unpolarized_fft,
+        zero_potential,
+        0.0,
+        unpolarized_options
+    );
+    if (!nonspin.converged || !unpolarized.converged) {
+        throw std::runtime_error(
+            "Unpolarized nspin equivalence SCF did not converge."
+        );
+    }
+    require_close(
+        unpolarized.variational_energy,
+        nonspin.variational_energy,
+        2.0e-11,
+        "nspin=2 unpolarized energy"
+    );
+    require_close(
+        unpolarized.magnetization,
+        0.0,
+        1.0e-12,
+        "nspin=2 unpolarized magnetization"
+    );
+    require_close(
+        unpolarized.spin_electron_counts[0],
+        1.0,
+        1.0e-12,
+        "Unpolarized spin-up electron count"
+    );
+    require_close(
+        unpolarized.spin_electron_counts[1],
+        1.0,
+        1.0e-12,
+        "Unpolarized spin-down electron count"
+    );
+
+    SCFOptions hydrogen_options =
+        make_zero_temperature_options();
+    hydrogen_options.nelec = 1.0;
+    hydrogen_options.nspin = 2;
+    hydrogen_options.starting_magnetization = 1.0;
+    FFTWorkspace hydrogen_fft(grid);
+    const KPointSCFResult hydrogen = run_kpoint_scf(
+        lattice,
+        {gamma},
+        hydrogen_fft,
+        zero_potential,
+        0.0,
+        hydrogen_options
+    );
+    if (!hydrogen.converged) {
+        throw std::runtime_error(
+            "One-electron spin-polarized SCF did not converge."
+        );
+    }
+    require_close(
+        hydrogen.magnetization,
+        1.0,
+        1.0e-12,
+        "One-electron magnetization"
+    );
+    require_close(
+        hydrogen.spin_electron_counts[0],
+        1.0,
+        1.0e-12,
+        "One-electron spin-up count"
+    );
+    require_close(
+        hydrogen.spin_electron_counts[1],
+        0.0,
+        1.0e-12,
+        "One-electron spin-down count"
+    );
+    if (hydrogen.kpoints.size() != 2 ||
+        hydrogen.spin_densities.size() != 2) {
+        throw std::runtime_error(
+            "Spin-resolved electronic state was not retained."
+        );
+    }
 }
 
 void test_two_kpoint_scf() {
@@ -192,6 +367,15 @@ void test_two_kpoint_scf() {
         throw std::runtime_error("SCF did not preserve both k-point states.");
     }
     if (parallel::is_root()) {
+        const std::string output = log.str();
+        if (output.find("d eps") == std::string::npos ||
+            output.find("ncg") == std::string::npos ||
+            output.find("rms(c)") == std::string::npos ||
+            output.find("DAV:") == std::string::npos) {
+            throw std::runtime_error(
+                "VASP-style DAV diagnostics are incomplete."
+            );
+        }
         std::ostringstream summary_marker;
         summary_marker << " " << std::setw(4) << result.iterations
             << " F= ";
@@ -344,6 +528,7 @@ int main(int argc, char** argv) {
             test_eigensolver_tolerance_schedule();
             test_shifted_basis();
             test_global_occupations();
+            test_collinear_spin_scf();
             test_gamma_wrapper_equivalence();
             test_two_kpoint_scf();
             if (parallel::is_root()) {

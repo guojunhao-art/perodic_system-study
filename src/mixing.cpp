@@ -100,6 +100,10 @@ void renormalize_density(
     double dV,
     double target_nelec) {
 
+    if (std::abs(target_nelec) < 1.0e-14) {
+        std::fill(rho.begin(), rho.end(), 0.0);
+        return;
+    }
     const double nelec_now =
         electron_number_from_density(rho, dV);
 

@@ -25,6 +25,80 @@ double maximum_residual(const std::vector<double>& residuals) {
     return maximum;
 }
 
+int electronic_state_index(
+    int spin,
+    int kpoint,
+    int kpoint_count) {
+
+    return spin * kpoint_count + kpoint;
+}
+
+std::vector<double> sum_spin_densities(
+    const std::vector<std::vector<double>>& spin_densities) {
+
+    if (spin_densities.empty()) {
+        return {};
+    }
+    std::vector<double> total(spin_densities.front().size(), 0.0);
+    for (const std::vector<double>& density : spin_densities) {
+        if (density.size() != total.size()) {
+            throw std::runtime_error(
+                "Spin-density grids have inconsistent sizes."
+            );
+        }
+        for (int p = 0; p < static_cast<int>(total.size()); ++p) {
+            total[p] += density[p];
+        }
+    }
+    return total;
+}
+
+double spin_density_residual(
+    const std::vector<std::vector<double>>& input,
+    const std::vector<std::vector<double>>& output,
+    double dV) {
+
+    if (input.size() != output.size() || input.empty()) {
+        throw std::runtime_error(
+            "Spin-density residual channel mismatch."
+        );
+    }
+    const std::vector<double> charge_input =
+        sum_spin_densities(input);
+    const std::vector<double> charge_output =
+        sum_spin_densities(output);
+    double residual = density_norm(
+        density_residual(charge_input, charge_output), dV
+    );
+    if (input.size() == 2) {
+        std::vector<double> magnetization_input(
+            charge_input.size(), 0.0
+        );
+        std::vector<double> magnetization_output(
+            charge_input.size(), 0.0
+        );
+        for (int p = 0;
+             p < static_cast<int>(charge_input.size());
+             ++p) {
+            magnetization_input[p] =
+                input[0][p] - input[1][p];
+            magnetization_output[p] =
+                output[0][p] - output[1][p];
+        }
+        residual = std::max(
+            residual,
+            density_norm(
+                density_residual(
+                    magnetization_input,
+                    magnetization_output
+                ),
+                dV
+            )
+        );
+    }
+    return residual;
+}
+
 void validate_inputs(
     const std::vector<KPointHamiltonian>& kpoints,
     const FFTWorkspace& fft,
@@ -40,6 +114,23 @@ void validate_inputs(
     }
     if (options.nbands <= 0) {
         throw std::runtime_error("SCF band count must be positive.");
+    }
+    if (options.nspin != 1 && options.nspin != 2) {
+        throw std::runtime_error("SCF nspin must be 1 or 2.");
+    }
+    if (!std::isfinite(options.starting_magnetization) ||
+        std::abs(options.starting_magnetization) >
+            options.nelec + 1.0e-12) {
+        throw std::runtime_error(
+            "The starting magnetization must be finite and satisfy "
+            "|M| <= nelect."
+        );
+    }
+    if (options.nspin == 1 &&
+        std::abs(options.starting_magnetization) > 1.0e-14) {
+        throw std::runtime_error(
+            "A nonzero starting magnetization requires nspin = 2."
+        );
     }
     if (static_cast<int>(ionic_potential.size()) != fft.grid.ngrid) {
         throw std::runtime_error("Ionic potential size does not match FFT grid.");
@@ -62,14 +153,37 @@ void validate_inputs(
             "Fixed occupations must contain one value per band."
         );
     }
+    if (options.nspin == 2 &&
+        options.occupation_mode == OccupationMode::Fixed) {
+        throw std::runtime_error(
+            "Fixed occupations are not supported with nspin = 2."
+        );
+    }
     if (!initial_guess.density.empty() &&
         static_cast<int>(initial_guess.density.size()) != fft.grid.ngrid) {
         throw std::runtime_error("Initial density size does not match FFT grid.");
     }
+    if (!initial_guess.spin_densities.empty()) {
+        if (static_cast<int>(initial_guess.spin_densities.size())
+            != options.nspin) {
+            throw std::runtime_error(
+                "Initial spin-density channels do not match nspin."
+            );
+        }
+        for (const std::vector<double>& density :
+             initial_guess.spin_densities) {
+            if (static_cast<int>(density.size()) != fft.grid.ngrid) {
+                throw std::runtime_error(
+                    "An initial spin-density grid has the wrong size."
+                );
+            }
+        }
+    }
     if (!initial_guess.orbitals.empty() &&
-        initial_guess.orbitals.size() != kpoints.size()) {
+        initial_guess.orbitals.size() !=
+            static_cast<std::size_t>(options.nspin) * kpoints.size()) {
         throw std::runtime_error(
-            "Initial k-point orbital blocks must match the k-point count."
+            "Initial orbital blocks must match nspin times the k-point count."
         );
     }
 
@@ -88,13 +202,19 @@ void validate_inputs(
             );
         }
         if (!initial_guess.orbitals.empty()) {
-            const Eigen::MatrixXcd& orbitals = initial_guess.orbitals[ik];
-            if (orbitals.size() != 0 &&
-                (orbitals.rows() != point.basis.size() ||
-                 orbitals.cols() < options.nbands)) {
-                throw std::runtime_error(
-                    "Initial k-point orbitals have incompatible dimensions."
-                );
+            for (int spin = 0; spin < options.nspin; ++spin) {
+                const Eigen::MatrixXcd& orbitals =
+                    initial_guess.orbitals[electronic_state_index(
+                        spin, ik, static_cast<int>(kpoints.size())
+                    )];
+                if (orbitals.size() != 0 &&
+                    (orbitals.rows() != point.basis.size() ||
+                     orbitals.cols() < options.nbands)) {
+                    throw std::runtime_error(
+                        "Initial k-point orbitals have incompatible "
+                        "dimensions."
+                    );
+                }
             }
         }
         weight_sum += point.weight;
@@ -104,17 +224,11 @@ void validate_inputs(
     }
 }
 
-void print_header(std::ostream& out, int nkpoints, int process_count) {
+void print_header(std::ostream& out) {
     out << "\n"
-        << "------------------------- k-point electronic minimization "
-        << "-------------------------\n"
-        << "  NKPTS = " << nkpoints
-        << "    MPI ranks = " << process_count
-        << "    active k-point ranks = "
-        << std::min(nkpoints, process_count) << "\n"
-        << "          N                     E              dE"
-        << "        rms(rho)  Niter  N_Hpsi      rms(eig)"
-        << "       eig_tol\n";
+        << "       N       E                     dE"
+        << "             d eps       ncg     rms"
+        << "          rms(c)\n";
 }
 
 void print_iteration(
@@ -122,11 +236,11 @@ void print_iteration(
     int iteration,
     double energy,
     double signed_energy_change,
+    double signed_band_energy_change,
     double density_residual,
-    int eigensolver_iterations,
     int hamiltonian_applications,
     double eigensolver_residual,
-    double eigensolver_tolerance) {
+    bool print_density_residual) {
 
     const auto flags = out.flags();
     const auto precision = out.precision();
@@ -135,12 +249,14 @@ void print_iteration(
         << std::setw(20) << energy
         << "  " << std::setprecision(4) << std::setw(12)
         << signed_energy_change
-        << "  " << std::setw(12) << density_residual
-        << "  " << std::setw(5) << eigensolver_iterations
+        << "  " << std::setw(12) << signed_band_energy_change
         << "  " << std::setw(7) << hamiltonian_applications
         << "  " << std::setw(12) << eigensolver_residual
-        << "  " << std::setw(12) << eigensolver_tolerance
-        << "\n";
+        << (print_density_residual ? "  " : "              ");
+    if (print_density_residual) {
+        out << std::setw(12) << density_residual;
+    }
+    out << "\n";
     out.flags(flags);
     out.precision(precision);
 }
@@ -165,7 +281,12 @@ void print_summary(
         << signed_energy_change << "\n"
         << "  global mu = " << std::setprecision(12)
         << result.occupations.mu
-        << "  weighted Ne = " << result.occupations.nelec_sum << "\n"
+        << "  weighted Ne = " << result.occupations.nelec_sum;
+    if (result.spin_densities.size() == 2) {
+        out << "  magnetization = " << result.magnetization
+            << " mu_B";
+    }
+    out << "\n"
         << "  eigensolver work: N_Hpsi = "
         << result.eigensolver_hamiltonian_applications
         << "  N_Hblock = "
@@ -213,63 +334,150 @@ KPointSCFResult run_kpoint_scf(
 
     const double volume = lattice.volume();
     const double dV = volume / static_cast<double>(fft.grid.ngrid);
-    std::vector<double> rho = initial_guess.density;
-    if (rho.empty()) {
-        rho.assign(fft.grid.ngrid, options.nelec / volume);
-    } else {
-        renormalize_density(rho, dV, options.nelec);
-    }
-
-    std::vector<Eigen::MatrixXcd> orbital_guesses(kpoints.size());
-    for (int ik : distribution.local_kpoints()) {
-        if (!initial_guess.orbitals.empty() &&
-            initial_guess.orbitals[ik].size() != 0) {
-            orbital_guesses[ik] = initial_guess.orbitals[ik];
+    const int kpoint_count = static_cast<int>(kpoints.size());
+    const int state_count = options.nspin * kpoint_count;
+    std::vector<std::vector<double>> spin_densities =
+        initial_guess.spin_densities;
+    if (spin_densities.empty()) {
+        const double up_electrons = options.nspin == 1
+            ? options.nelec
+            : 0.5 * (
+                options.nelec + options.starting_magnetization
+            );
+        const double down_electrons = options.nspin == 1
+            ? 0.0
+            : options.nelec - up_electrons;
+        spin_densities.assign(
+            options.nspin,
+            std::vector<double>(fft.grid.ngrid, 0.0)
+        );
+        if (!initial_guess.density.empty()) {
+            std::vector<double> total_density = initial_guess.density;
+            renormalize_density(
+                total_density, dV, options.nelec
+            );
+            const double up_fraction = options.nelec > 0.0
+                ? up_electrons / options.nelec
+                : 1.0;
+            for (int p = 0; p < fft.grid.ngrid; ++p) {
+                spin_densities[0][p] =
+                    up_fraction * total_density[p];
+                if (options.nspin == 2) {
+                    spin_densities[1][p] =
+                        total_density[p] - spin_densities[0][p];
+                }
+            }
         } else {
-            const int trial_count = std::min(
-                kpoints[ik].basis.size(), options.nbands + 4
+            std::fill(
+                spin_densities[0].begin(),
+                spin_densities[0].end(),
+                up_electrons / volume
             );
-            orbital_guesses[ik] = initial_low_kinetic_trials(
-                kpoints[ik].basis.size(), trial_count
+            if (options.nspin == 2) {
+                std::fill(
+                    spin_densities[1].begin(),
+                    spin_densities[1].end(),
+                    down_electrons / volume
+                );
+            }
+        }
+    } else {
+        const std::vector<double> total_density =
+            sum_spin_densities(spin_densities);
+        const double current_electrons =
+            electron_number_from_density(total_density, dV);
+        if (std::abs(current_electrons) < 1.0e-14) {
+            throw std::runtime_error(
+                "The initial spin density contains no electrons."
             );
+        }
+        const double scale = options.nelec / current_electrons;
+        for (std::vector<double>& density : spin_densities) {
+            for (double& value : density) {
+                value *= scale;
+            }
         }
     }
 
-    PulayMixer pulay;
-    pulay.alpha = options.mixing_alpha;
-    pulay.max_history = options.pulay_max_history;
-    pulay.min_history = options.pulay_min_history;
-    pulay.regularization = options.pulay_regularization;
-    LibXCLDAFunctional xc(options.lda_functional);
+    std::vector<Eigen::MatrixXcd> orbital_guesses(state_count);
+    for (int ik : distribution.local_kpoints()) {
+        for (int spin = 0; spin < options.nspin; ++spin) {
+            const int state =
+                electronic_state_index(spin, ik, kpoint_count);
+            if (!initial_guess.orbitals.empty() &&
+                initial_guess.orbitals[state].size() != 0) {
+                orbital_guesses[state] =
+                    initial_guess.orbitals[state];
+            } else {
+                const int trial_count = std::min(
+                    kpoints[ik].basis.size(), options.nbands + 4
+                );
+                orbital_guesses[state] = initial_low_kinetic_trials(
+                    kpoints[ik].basis.size(), trial_count
+                );
+            }
+        }
+    }
+
+    std::vector<PulayMixer> pulay(options.nspin);
+    for (PulayMixer& mixer : pulay) {
+        mixer.alpha = options.mixing_alpha;
+        mixer.max_history = options.pulay_max_history;
+        mixer.min_history = options.pulay_min_history;
+        mixer.regularization = options.pulay_regularization;
+    }
+    LibXCLDAFunctional xc(
+        options.lda_functional, options.nspin
+    );
     std::vector<double> weights;
-    weights.reserve(kpoints.size());
-    for (const KPointHamiltonian& point : kpoints) {
-        weights.push_back(point.weight);
+    weights.reserve(state_count);
+    for (int spin = 0; spin < options.nspin; ++spin) {
+        for (const KPointHamiltonian& point : kpoints) {
+            weights.push_back(point.weight);
+        }
     }
 
     KPointSCFResult result;
     double previous_energy = 0.0;
+    double previous_band_energy = 0.0;
     double last_signed_energy_change = 0.0;
     const bool logging_enabled =
         parallel::is_root() && log_stream != nullptr
         && options.verbosity != SCFVerbosity::Silent;
     if (logging_enabled) {
-        print_header(
-            *log_stream,
-            static_cast<int>(kpoints.size()),
-            distribution.size()
-        );
+        print_header(*log_stream);
     }
 
     for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
         const double eigensolver_tolerance = eigensolver_tolerances.current();
-        const auto hartree_input = build_hartree_potential(lattice, fft, rho);
-        const auto xc_input = xc.evaluate(rho, dV);
-        const auto effective_potential = combine_effective_potential(
-            ionic_potential, hartree_input, xc_input.Vxc
+        const std::vector<double> density_input =
+            sum_spin_densities(spin_densities);
+        const auto hartree_input = build_hartree_potential(
+            lattice, fft, density_input
         );
+        std::vector<std::vector<double>> effective_potentials(
+            options.nspin
+        );
+        if (options.nspin == 1) {
+            const auto xc_input = xc.evaluate(
+                spin_densities[0], dV
+            );
+            effective_potentials[0] = combine_effective_potential(
+                ionic_potential, hartree_input, xc_input.Vxc
+            );
+        } else {
+            const auto xc_input = xc.evaluate_spin(
+                spin_densities[0], spin_densities[1], dV
+            );
+            effective_potentials[0] = combine_effective_potential(
+                ionic_potential, hartree_input, xc_input.Vxc_up
+            );
+            effective_potentials[1] = combine_effective_potential(
+                ionic_potential, hartree_input, xc_input.Vxc_down
+            );
+        }
 
-        std::vector<DavidsonResult> solutions(kpoints.size());
+        std::vector<DavidsonResult> solutions(state_count);
         int local_eigensolver_steps = 0;
         int local_hamiltonian_applications = 0;
         int local_hamiltonian_block_calls = 0;
@@ -277,6 +485,8 @@ KPointSCFResult run_kpoint_scf(
         double local_hamiltonian_seconds = 0.0;
         double local_subspace_seconds = 0.0;
         double local_maximum_residual = 0.0;
+        double local_residual_square_sum = 0.0;
+        int local_residual_count = 0;
         std::string local_eigensolver_error;
 
         try {
@@ -293,55 +503,71 @@ KPointSCFResult run_kpoint_scf(
                     );
                 const std::vector<NonlocalProjector>* projector_pointer =
                     point.projectors.empty() ? nullptr : &point.projectors;
-                DavidsonResult solution = davidson_lowest_eigenstates(
-                    point.basis,
-                    fft,
-                    effective_potential,
-                    options.nbands,
-                    orbital_guesses[ik],
-                    options.eigensolver_max_iterations,
-                    maximum_subspace,
-                    eigensolver_tolerance,
-                    options.eigensolver_denom_floor,
-                    projector_pointer,
-                    logging_enabled
-                        && distribution.size() == 1
-                        && options.verbosity == SCFVerbosity::Detailed
-                );
-                const double residual = maximum_residual(
-                    solution.residual_norms
-                );
-                if (!solution.converged) {
-                    std::ostringstream message;
-                    message
-                        << "Davidson eigensolver did not converge at k point "
-                        << ik << " ("
-                        << point.fractional_position.transpose()
-                        << "): max residual = " << residual
-                        << ", requested tolerance = "
-                        << eigensolver_tolerance
-                        << ", worst band = "
-                        << solution.max_residual_band
-                        << ", subspace = "
-                        << solution.final_subspace_size
-                        << ", Hpsi applications = "
-                        << solution.hamiltonian_applications;
-                    throw std::runtime_error(message.str());
-                }
+                for (int spin = 0; spin < options.nspin; ++spin) {
+                    const int state = electronic_state_index(
+                        spin, ik, kpoint_count
+                    );
+                    DavidsonResult solution =
+                        davidson_lowest_eigenstates(
+                            point.basis,
+                            fft,
+                            effective_potentials[spin],
+                            options.nbands,
+                            orbital_guesses[state],
+                            options.eigensolver_max_iterations,
+                            maximum_subspace,
+                            eigensolver_tolerance,
+                            options.eigensolver_denom_floor,
+                            projector_pointer,
+                            logging_enabled
+                                && distribution.size() == 1
+                                && options.verbosity ==
+                                    SCFVerbosity::Detailed
+                        );
+                    const double residual = maximum_residual(
+                        solution.residual_norms
+                    );
+                    if (!solution.converged) {
+                        std::ostringstream message;
+                        message
+                            << "Davidson eigensolver did not converge at "
+                            << "spin " << spin << ", k point " << ik
+                            << " ("
+                            << point.fractional_position.transpose()
+                            << "): max residual = " << residual
+                            << ", requested tolerance = "
+                            << eigensolver_tolerance
+                            << ", worst band = "
+                            << solution.max_residual_band
+                            << ", subspace = "
+                            << solution.final_subspace_size
+                            << ", Hpsi applications = "
+                            << solution.hamiltonian_applications;
+                        throw std::runtime_error(message.str());
+                    }
 
-                local_eigensolver_steps += solution.iterations;
-                local_hamiltonian_applications +=
-                    solution.hamiltonian_applications;
-                local_hamiltonian_block_calls +=
-                    solution.hamiltonian_block_calls;
-                local_eigensolver_restarts += solution.subspace_restarts;
-                local_hamiltonian_seconds += solution.hamiltonian_seconds;
-                local_subspace_seconds +=
-                    solution.subspace_diagonalization_seconds;
-                local_maximum_residual = std::max(
-                    local_maximum_residual, residual
-                );
-                solutions[ik] = std::move(solution);
+                    local_eigensolver_steps += solution.iterations;
+                    local_hamiltonian_applications +=
+                        solution.hamiltonian_applications;
+                    local_hamiltonian_block_calls +=
+                        solution.hamiltonian_block_calls;
+                    local_eigensolver_restarts +=
+                        solution.subspace_restarts;
+                    local_hamiltonian_seconds +=
+                        solution.hamiltonian_seconds;
+                    local_subspace_seconds +=
+                        solution.subspace_diagonalization_seconds;
+                    local_maximum_residual = std::max(
+                        local_maximum_residual, residual
+                    );
+                    for (double band_residual :
+                         solution.residual_norms) {
+                        local_residual_square_sum +=
+                            band_residual * band_residual;
+                        ++local_residual_count;
+                    }
+                    solutions[state] = std::move(solution);
+                }
             }
         } catch (const std::exception& error) {
             std::ostringstream message;
@@ -373,6 +599,17 @@ KPointSCFResult run_kpoint_scf(
             parallel::sum(local_subspace_seconds);
         const double iteration_maximum_residual =
             parallel::maximum(local_maximum_residual);
+        const double iteration_residual_square_sum =
+            parallel::sum(local_residual_square_sum);
+        const int iteration_residual_count =
+            parallel::sum(local_residual_count);
+        const double iteration_residual_rms =
+            iteration_residual_count > 0
+            ? std::sqrt(
+                iteration_residual_square_sum /
+                static_cast<double>(iteration_residual_count)
+            )
+            : 0.0;
 
         result.eigensolver_hamiltonian_applications +=
             iteration_hamiltonian_applications;
@@ -385,24 +622,31 @@ KPointSCFResult run_kpoint_scf(
         result.eigensolver_subspace_seconds += iteration_subspace_seconds;
 
         std::vector<double> packed_eigenvalues(
-            kpoints.size() * static_cast<std::size_t>(options.nbands),
+            static_cast<std::size_t>(state_count) * options.nbands,
             0.0
         );
         for (int ik : distribution.local_kpoints()) {
-            for (int ib = 0; ib < options.nbands; ++ib) {
-                packed_eigenvalues[
-                    static_cast<std::size_t>(ik) * options.nbands + ib
-                ] = solutions[ik].eigenvalues[ib];
+            for (int spin = 0; spin < options.nspin; ++spin) {
+                const int state = electronic_state_index(
+                    spin, ik, kpoint_count
+                );
+                for (int ib = 0; ib < options.nbands; ++ib) {
+                    packed_eigenvalues[
+                        static_cast<std::size_t>(state) *
+                            options.nbands + ib
+                    ] = solutions[state].eigenvalues[ib];
+                }
             }
         }
         parallel::sum_in_place(packed_eigenvalues);
 
-        std::vector<Eigen::VectorXd> eigenvalues(kpoints.size());
-        for (int ik = 0; ik < static_cast<int>(kpoints.size()); ++ik) {
-            eigenvalues[ik].resize(options.nbands);
+        std::vector<Eigen::VectorXd> eigenvalues(state_count);
+        for (int state = 0; state < state_count; ++state) {
+            eigenvalues[state].resize(options.nbands);
             for (int ib = 0; ib < options.nbands; ++ib) {
-                eigenvalues[ik][ib] = packed_eigenvalues[
-                    static_cast<std::size_t>(ik) * options.nbands + ib
+                eigenvalues[state][ib] = packed_eigenvalues[
+                    static_cast<std::size_t>(state) *
+                        options.nbands + ib
                 ];
             }
         }
@@ -415,55 +659,82 @@ KPointSCFResult run_kpoint_scf(
                 options.occupation_mode,
                 options.fixed_occupations,
                 options.smearing_sigma,
-                options.degeneracy_tolerance
+                options.degeneracy_tolerance,
+                options.nspin == 1 ? 2.0 : 1.0,
+                static_cast<double>(options.nspin)
             );
 
-        std::vector<double> density_output(fft.grid.ngrid, 0.0);
+        std::vector<std::vector<double>> spin_density_output(
+            options.nspin,
+            std::vector<double>(fft.grid.ngrid, 0.0)
+        );
         double local_kinetic_energy = 0.0;
         double local_nonlocal_energy = 0.0;
-        std::vector<KPointElectronicState> electronic_states(kpoints.size());
-        for (int ik = 0; ik < static_cast<int>(kpoints.size()); ++ik) {
-            const KPointHamiltonian& point = kpoints[ik];
-            KPointElectronicState& state = electronic_states[ik];
-            state.fractional_position = point.fractional_position;
-            state.weight = point.weight;
-            state.owner_rank = distribution.owner(ik);
-            state.eigenvalues = eigenvalues[ik];
-            state.occupations = occupations.occupations[ik];
+        std::vector<KPointElectronicState> electronic_states(
+            state_count
+        );
+        for (int spin = 0; spin < options.nspin; ++spin) {
+            for (int ik = 0; ik < kpoint_count; ++ik) {
+                const int state_index = electronic_state_index(
+                    spin, ik, kpoint_count
+                );
+                const KPointHamiltonian& point = kpoints[ik];
+                KPointElectronicState& state =
+                    electronic_states[state_index];
+                state.spin_channel = spin;
+                state.kpoint_index = ik;
+                state.fractional_position =
+                    point.fractional_position;
+                state.weight = point.weight;
+                state.owner_rank = distribution.owner(ik);
+                state.eigenvalues = eigenvalues[state_index];
+                state.occupations =
+                    occupations.occupations[state_index];
+            }
         }
 
         std::string local_density_error;
         try {
             for (int ik : distribution.local_kpoints()) {
                 const KPointHamiltonian& point = kpoints[ik];
-                Eigen::MatrixXcd orbitals =
-                    solutions[ik].eigenvectors.leftCols(options.nbands);
-                const auto density_at_k = build_density_from_orbitals(
-                    point.basis,
-                    fft,
-                    orbitals,
-                    occupations.occupations[ik],
-                    volume
-                );
-                for (int grid_index = 0;
-                     grid_index < fft.grid.ngrid;
-                     ++grid_index) {
-                    density_output[grid_index] +=
-                        point.weight * density_at_k[grid_index];
+                for (int spin = 0; spin < options.nspin; ++spin) {
+                    const int state = electronic_state_index(
+                        spin, ik, kpoint_count
+                    );
+                    Eigen::MatrixXcd orbitals =
+                        solutions[state].eigenvectors.leftCols(
+                            options.nbands
+                        );
+                    const auto density_at_k =
+                        build_density_from_orbitals(
+                            point.basis,
+                            fft,
+                            orbitals,
+                            occupations.occupations[state],
+                            volume
+                        );
+                    for (int grid_index = 0;
+                         grid_index < fft.grid.ngrid;
+                         ++grid_index) {
+                        spin_density_output[spin][grid_index] +=
+                            point.weight *
+                            density_at_k[grid_index];
+                    }
+                    local_kinetic_energy +=
+                        point.weight * compute_kinetic_energy(
+                            point.basis,
+                            orbitals,
+                            occupations.occupations[state]
+                        );
+                    local_nonlocal_energy +=
+                        point.weight * compute_nonlocal_energy(
+                            point.projectors,
+                            orbitals,
+                            occupations.occupations[state]
+                        );
+                    electronic_states[state].orbitals =
+                        std::move(orbitals);
                 }
-                local_kinetic_energy +=
-                    point.weight * compute_kinetic_energy(
-                        point.basis,
-                        orbitals,
-                        occupations.occupations[ik]
-                    );
-                local_nonlocal_energy +=
-                    point.weight * compute_nonlocal_energy(
-                        point.projectors,
-                        orbitals,
-                        occupations.occupations[ik]
-                    );
-                electronic_states[ik].orbitals = std::move(orbitals);
             }
         } catch (const std::exception& error) {
             std::ostringstream message;
@@ -482,14 +753,34 @@ KPointSCFResult run_kpoint_scf(
             throw std::runtime_error(density_error);
         }
 
-        parallel::sum_in_place(density_output);
+        for (std::vector<double>& density : spin_density_output) {
+            parallel::sum_in_place(density);
+        }
+        const std::vector<double> density_output =
+            sum_spin_densities(spin_density_output);
         const double kinetic_energy = parallel::sum(local_kinetic_energy);
         const double nonlocal_energy = parallel::sum(local_nonlocal_energy);
 
         const auto hartree_output = build_hartree_potential(
             lattice, fft, density_output
         );
-        const auto xc_output = xc.evaluate(density_output, dV);
+        double exchange_energy = 0.0;
+        double correlation_energy = 0.0;
+        if (options.nspin == 1) {
+            const auto xc_output = xc.evaluate(
+                spin_density_output[0], dV
+            );
+            exchange_energy = xc_output.exchange_energy;
+            correlation_energy = xc_output.correlation_energy;
+        } else {
+            const auto xc_output = xc.evaluate_spin(
+                spin_density_output[0],
+                spin_density_output[1],
+                dV
+            );
+            exchange_energy = xc_output.exchange_energy;
+            correlation_energy = xc_output.correlation_energy;
+        }
         EnergyTerms energy;
         energy.kinetic = kinetic_energy;
         for (int grid_index = 0;
@@ -500,8 +791,8 @@ KPointSCFResult run_kpoint_scf(
             energy.hartree += 0.5 * dV * density_output[grid_index]
                 * hartree_output[grid_index];
         }
-        energy.exchange = xc_output.exchange_energy;
-        energy.correlation = xc_output.correlation_energy;
+        energy.exchange = exchange_energy;
+        energy.correlation = correlation_energy;
         energy.nonlocal = nonlocal_energy;
         energy.total = energy.kinetic + energy.external + energy.hartree
             + energy.exchange + energy.correlation + energy.nonlocal;
@@ -524,21 +815,56 @@ KPointSCFResult run_kpoint_scf(
             ? 0.0
             : energy_for_convergence - previous_energy;
         const double energy_change = std::abs(signed_energy_change);
-        const double density_residual = pulay_mix_density(
-            pulay,
-            rho,
-            density_output,
-            dV,
-            options.nelec
+        double band_energy = 0.0;
+        for (int state = 0; state < state_count; ++state) {
+            for (int ib = 0; ib < options.nbands; ++ib) {
+                band_energy += weights[state]
+                    * occupations.occupations[state][ib]
+                    * eigenvalues[state][ib];
+            }
+        }
+        const double signed_band_energy_change = iteration == 0
+            ? 0.0
+            : band_energy - previous_band_energy;
+        const double band_energy_change =
+            std::abs(signed_band_energy_change);
+        const double density_residual = spin_density_residual(
+            spin_densities, spin_density_output, dV
         );
+        std::array<double, 2> spin_electron_counts{{0.0, 0.0}};
+        for (int spin = 0; spin < options.nspin; ++spin) {
+            for (int ik = 0; ik < kpoint_count; ++ik) {
+                const int state = electronic_state_index(
+                    spin, ik, kpoint_count
+                );
+                for (double occupation :
+                     occupations.occupations[state]) {
+                    spin_electron_counts[spin] +=
+                        kpoints[ik].weight * occupation;
+                }
+            }
+            pulay_mix_density(
+                pulay[spin],
+                spin_densities[spin],
+                spin_density_output[spin],
+                dV,
+                spin_electron_counts[spin]
+            );
+        }
 
         result.iterations = iteration + 1;
         result.final_density_residual = density_residual;
         result.final_energy_change = energy_change;
+        result.final_band_energy_change = band_energy_change;
         result.final_eigensolver_tolerance = eigensolver_tolerance;
         result.kpoints = std::move(electronic_states);
         result.occupations = occupations;
         result.density = density_output;
+        result.spin_densities = spin_density_output;
+        result.spin_electron_counts = spin_electron_counts;
+        result.magnetization = options.nspin == 2
+            ? spin_electron_counts[0] - spin_electron_counts[1]
+            : 0.0;
         result.energy = energy;
         result.electron_number_from_density =
             electron_number_from_density(density_output, dV);
@@ -551,16 +877,25 @@ KPointSCFResult run_kpoint_scf(
                 iteration,
                 result.variational_energy,
                 signed_energy_change,
+                signed_band_energy_change,
                 density_residual,
-                iteration_eigensolver_steps,
                 iteration_hamiltonian_applications,
-                iteration_maximum_residual,
-                eigensolver_tolerance
+                iteration_residual_rms,
+                true
             );
             if (options.verbosity == SCFVerbosity::Detailed) {
                 *log_stream << "       mu = " << occupations.mu
                     << "  weighted Ne = " << occupations.nelec_sum
-                    << "  eig_tol = " << eigensolver_tolerance << "\n";
+                    << "  eig_tol = " << eigensolver_tolerance
+                    << "  max residual = "
+                    << iteration_maximum_residual;
+                if (options.nspin == 2) {
+                    *log_stream << "  N(up/down) = "
+                        << spin_electron_counts[0] << " / "
+                        << spin_electron_counts[1]
+                        << "  M = " << result.magnetization;
+                }
+                *log_stream << "\n";
                 const bool print_bands =
                     iteration < options.band_print_interval
                     || (options.band_print_interval > 0 &&
@@ -569,18 +904,23 @@ KPointSCFResult run_kpoint_scf(
                     const int bands_to_print = std::min(
                         options.bands_to_print, options.nbands
                     );
-                    for (int ik = 0;
-                         ik < static_cast<int>(kpoints.size());
-                         ++ik) {
-                        *log_stream << "       k[" << ik << "] = "
-                            << kpoints[ik].fractional_position.transpose()
-                            << "  w = " << kpoints[ik].weight << "\n";
-                        for (int ib = 0; ib < bands_to_print; ++ib) {
-                            *log_stream << "         band " << ib
-                                << "  eps = " << eigenvalues[ik][ib]
-                                << "  occ = "
-                                << occupations.occupations[ik][ib]
-                                << "\n";
+                    for (int spin = 0; spin < options.nspin; ++spin) {
+                        for (int ik = 0; ik < kpoint_count; ++ik) {
+                            const int state = electronic_state_index(
+                                spin, ik, kpoint_count
+                            );
+                            *log_stream << "       spin " << spin
+                                << "  k[" << ik << "] = "
+                                << kpoints[ik].fractional_position.transpose()
+                                << "  w = " << kpoints[ik].weight << "\n";
+                            for (int ib = 0; ib < bands_to_print; ++ib) {
+                                *log_stream << "         band " << ib
+                                    << "  eps = "
+                                    << eigenvalues[state][ib]
+                                    << "  occ = "
+                                    << occupations.occupations[state][ib]
+                                    << "\n";
+                            }
                         }
                     }
                 }
@@ -588,8 +928,11 @@ KPointSCFResult run_kpoint_scf(
         }
 
         const bool outer_converged = iteration > 0 &&
-            density_residual < options.density_tolerance &&
-            energy_change < options.energy_tolerance;
+            scf_energy_changes_converged(
+                signed_energy_change,
+                signed_band_energy_change,
+                options.energy_tolerance
+            );
         if (outer_converged &&
             eigensolver_tolerances.at_final_tolerance()) {
             result.converged = true;
@@ -608,8 +951,15 @@ KPointSCFResult run_kpoint_scf(
         }
 
         previous_energy = energy_for_convergence;
+        previous_band_energy = band_energy;
         for (int ik : distribution.local_kpoints()) {
-            orbital_guesses[ik] = result.kpoints[ik].orbitals;
+            for (int spin = 0; spin < options.nspin; ++spin) {
+                const int state = electronic_state_index(
+                    spin, ik, kpoint_count
+                );
+                orbital_guesses[state] =
+                    result.kpoints[state].orbitals;
+            }
         }
     }
 

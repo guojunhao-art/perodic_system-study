@@ -508,7 +508,9 @@ KPointOccupationResult compute_kpoint_occupations(
     OccupationMode mode,
     const std::vector<double>& fixed_occ,
     double sigma,
-    double deg_tol) {
+    double deg_tol,
+    double occupation_max,
+    double expected_weight_sum) {
 
     if (eigenvalues.empty() || eigenvalues.size() != weights.size()) {
         throw std::runtime_error(
@@ -521,6 +523,17 @@ KPointOccupationResult compute_kpoint_occupations(
     if (!std::isfinite(deg_tol) || deg_tol <= 0.0) {
         throw std::runtime_error(
             "K-point degeneracy tolerance must be positive."
+        );
+    }
+    if (!std::isfinite(occupation_max) || occupation_max <= 0.0) {
+        throw std::runtime_error(
+            "Maximum state occupation must be positive and finite."
+        );
+    }
+    if (!std::isfinite(expected_weight_sum) ||
+        expected_weight_sum <= 0.0) {
+        throw std::runtime_error(
+            "Expected k-point weight sum must be positive and finite."
         );
     }
 
@@ -541,8 +554,10 @@ KPointOccupationResult compute_kpoint_occupations(
         weight_sum += weights[ik];
         total_states += eigenvalues[ik].size();
     }
-    if (std::abs(weight_sum - 1.0) > 1.0e-12) {
-        throw std::runtime_error("Normalized k-point weights must sum to one.");
+    if (std::abs(weight_sum - expected_weight_sum) > 1.0e-12) {
+        throw std::runtime_error(
+            "K-point/channel weights do not have the expected sum."
+        );
     }
 
     KPointOccupationResult result;
@@ -563,9 +578,10 @@ KPointOccupationResult compute_kpoint_occupations(
             for (int ib = 0; ib < eigenvalues[ik].size(); ++ib) {
                 const double occupation = fixed_occ[ib];
                 if (!std::isfinite(occupation) ||
-                    occupation < 0.0 || occupation > 2.0) {
+                    occupation < 0.0 ||
+                    occupation > occupation_max) {
                     throw std::runtime_error(
-                        "Each fixed occupation must be in [0, 2]."
+                        "A fixed occupation is outside the allowed range."
                     );
                 }
                 result.nelec_sum += weights[ik] * occupation;
@@ -598,7 +614,7 @@ KPointOccupationResult compute_kpoint_occupations(
     double maximum_capacity = 0.0;
     for (int ik = 0; ik < static_cast<int>(eigenvalues.size()); ++ik) {
         maximum_capacity +=
-            2.0 * weights[ik] * eigenvalues[ik].size();
+            occupation_max * weights[ik] * eigenvalues[ik].size();
         for (int ib = 0; ib < eigenvalues[ik].size(); ++ib) {
             states.push_back({
                 eigenvalues[ik][ib], ik, ib, weights[ik]
@@ -638,9 +654,10 @@ KPointOccupationResult compute_kpoint_occupations(
             for (int index = first; index < last; ++index) {
                 shell_weight += states[index].weight;
             }
-            const double shell_capacity = 2.0 * shell_weight;
+            const double shell_capacity =
+                occupation_max * shell_weight;
             const double occupation = remaining >= shell_capacity - 1.0e-12
-                ? 2.0
+                ? occupation_max
                 : remaining / shell_weight;
             for (int index = first; index < last; ++index) {
                 const WeightedState& state = states[index];
@@ -662,10 +679,11 @@ KPointOccupationResult compute_kpoint_occupations(
                     highest_occupied, state.energy
                 );
             }
-            if (occupation < 2.0 - 1.0e-12) {
+            if (occupation < occupation_max - 1.0e-12) {
                 lowest_not_full = std::min(lowest_not_full, state.energy);
             }
-            if (occupation > 1.0e-12 && occupation < 2.0 - 1.0e-12) {
+            if (occupation > 1.0e-12 &&
+                occupation < occupation_max - 1.0e-12) {
                 result.mu = state.energy;
                 partially_occupied = true;
             }
@@ -698,7 +716,7 @@ KPointOccupationResult compute_kpoint_occupations(
         double electron_count = 0.0;
         for (const WeightedState& state : states) {
             electron_count += state.weight * fermi_dirac_occ_single(
-                state.energy, mu, sigma, 2.0
+                state.energy, mu, sigma, occupation_max
             );
         }
         return electron_count;
@@ -714,14 +732,14 @@ KPointOccupationResult compute_kpoint_occupations(
     result.mu = 0.5 * (mu_low + mu_high);
     for (const WeightedState& state : states) {
         const double occupation = fermi_dirac_occ_single(
-            state.energy, result.mu, sigma, 2.0
+            state.energy, result.mu, sigma, occupation_max
         );
         result.occupations[state.kpoint][state.band] = occupation;
         result.nelec_sum += state.weight * occupation;
-        const double probability = 0.5 * occupation;
+        const double probability = occupation / occupation_max;
         if (probability > 1.0e-14 &&
             probability < 1.0 - 1.0e-14) {
-            result.entropy += state.weight * -2.0 * (
+            result.entropy += state.weight * -occupation_max * (
                 probability * std::log(probability)
                 + (1.0 - probability) * std::log(1.0 - probability)
             );

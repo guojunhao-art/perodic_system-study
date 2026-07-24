@@ -1,6 +1,15 @@
 #pragma once
 
 /*
+ * VASP-style outer SCF convergence: both the variational-energy change and
+ * occupied band-energy change must be below the same energy threshold.
+ */
+bool scf_energy_changes_converged(
+    double total_energy_change,
+    double band_energy_change,
+    double energy_tolerance) noexcept;
+
+/*
  * Match the accuracy of the inner Davidson solve to the current accuracy of
  * the outer SCF iteration. Tolerances use Hartree atomic units.
  */

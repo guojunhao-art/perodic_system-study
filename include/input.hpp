@@ -64,8 +64,6 @@ struct RelaxationOptions {
     double force_tolerance_ha_bohr = 2.0e-4;
     double max_step_angstrom = 0.10;
     double initial_curvature_ha_bohr2 = 0.10;
-    double curvature_tolerance = 1.0e-8;
-    double energy_increase_tolerance_ha = 1.0e-8;
 
     std::string contcar_path = "CONTCAR";
     std::string trajectory_path = "relaxation.xyz";

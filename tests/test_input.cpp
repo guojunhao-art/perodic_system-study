@@ -145,6 +145,11 @@ int main() {
                      "FFT grid parsing mismatch");
         require_true(!config.nbands_auto && config.scf.nbands == 9,
                      "nbands parsing mismatch");
+        require_true(
+            config.scf.nspin == 2 &&
+            std::abs(config.scf.starting_magnetization - 1.0) < 1.0e-14,
+            "spin-control parsing mismatch"
+        );
         require_true(config.nelect_auto,
                      "automatic nelect parsing mismatch");
         require_true(config.scf.occupation_mode == OccupationMode::FermiDirac,
@@ -170,12 +175,16 @@ int main() {
             data_path("general_relax.in")
         );
         require_true(
+            relax_config.fft_grid == std::array<int, 3>{{0, 0, 0}},
+            "fft_grid = auto parsing mismatch"
+        );
+        require_true(
             relax_config.calculation == CalculationType::Relax,
             "relax calculation parsing mismatch"
         );
         require_true(
-            relax_config.scf.verbosity == SCFVerbosity::Silent,
-            "SCF diagnostics should be silent by default"
+            relax_config.scf.verbosity == SCFVerbosity::Compact,
+            "VASP-style DAV diagnostics should be compact by default"
         );
         require_true(relax_config.relaxation.max_ionic_steps == 37,
                      "max_ionic_steps parsing mismatch");
@@ -198,6 +207,12 @@ int main() {
             0.20,
             1.0e-16,
             "initial BFGS curvature parsing"
+        );
+        require_close(
+            relax_config.scf.energy_tolerance,
+            1.0e-6,
+            0.0,
+            "default VASP-style EDIFF"
         );
         require_true(
             relax_config.relaxation.contcar_path == "test.CONTCAR" &&

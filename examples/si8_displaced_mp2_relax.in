@@ -6,7 +6,7 @@ kpoints = mp 2 2 2
 
 # Energies are Hartree unless the key explicitly says otherwise.
 ecut_ha = 10.0
-fft_grid = 36 36 36
+fft_grid = auto
 ewald_width_bohr = 0.70
 
 nelect = auto
@@ -16,7 +16,7 @@ smearing_ev = 0.05
 
 scf_max_iterations = 240
 density_tolerance = 1.0e-7
-energy_tolerance_ha = 1.0e-9
+energy_tolerance_ha = 1.0e-6
 eigensolver_max_iterations = 100
 eigensolver_initial_tolerance_ha = 1.0e-7
 eigensolver_tolerance_ha = 2.0e-10
@@ -31,8 +31,5 @@ max_backtracks = 5
 force_tolerance_ha_bohr = 2.0e-4
 max_step_angstrom = 0.05
 bfgs_initial_curvature_ha_bohr2 = 0.10
-bfgs_curvature_tolerance = 1.0e-8
-energy_increase_tolerance_ha = 1.0e-8
-
 contcar = CONTCAR
 trajectory = si8_relaxation.xyz

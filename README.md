@@ -1,16 +1,17 @@
 # 周期平面波 DFT 学习程序
 
 这是一个以“看清公式如何落到代码”为目标的周期平面波 Kohn–Sham DFT
-教学程序。当前支持完整均匀多 k 点网格、无自旋轨道和非自旋极化计算，并使用
-Hartree 原子单位。代码保留了许多生产级程序会封装起来的中间量，方便逐项
+教学程序。当前支持完整均匀多 k 点网格、非磁性和共线自旋极化计算（不含
+spin--orbit coupling），并使用 Hartree 原子单位。代码保留了许多生产级程序
+会封装起来的中间量，方便逐项
 检查能量、Hamiltonian、占据数和 Hellmann–Feynman 力。
 
 当前实现包括：
 
 - Bloch 多 k 点平面波基组、FFT-based $H\psi$ 和可选的 k 点级 MPI 并行；
 - Gamma-centered、Monkhorst–Pack 和显式带权 k 点输入；
-- 所有 k 点共享化学势的零温/Fermi–Dirac 占据及带权密度、能量和力；
-- LibXC 非自旋极化 LDA exchange + Perdew–Zunger correlation SCF；
+- 所有 k 点和自旋通道共享化学势的零温/Fermi–Dirac 占据及带权密度、能量和力；
+- LibXC 非磁性/共线自旋极化 LDA exchange + Perdew–Zunger correlation SCF；
 - fixed、简并感知零温和 Fermi–Dirac 占据；
 - 随外层密度残差自动收紧、并在退出前严格精修的 Davidson 容差；
 - 线性/自适应辅助函数和 Pulay density mixing；
@@ -117,8 +118,8 @@ Gaussian 宽度（Bohr）构造局域势，打印短程尾部和若干 $G$ 点�
 ### 1.2 POSCAR 与通用单点输入
 
 `pwdft` 将结构和数值参数分成两个文件。POSCAR 负责晶胞、元素、坐标及可选的
-`Selective dynamics` 标记；`key = value` 计算文件负责赝势映射、cutoff、FFT 网格、
-占据和收敛参数：
+`Selective dynamics` 标记；`key = value` 计算文件负责赝势映射、cutoff、占据和
+收敛参数。FFT 网格默认自动生成，也可显式覆盖：
 
 ```bash
 make pwdft
@@ -136,20 +137,38 @@ structure = POSCAR
 pseudo = Si pseudopotentials/Si.pz-vbc.UPF
 pseudo = H  pseudopotentials/H.pz-vbc.UPF
 ecut_ha = 10.0
-fft_grid = 48 48 48
+fft_grid = auto
 kpoints = gamma
 ```
 
-Davidson 内层求解默认从较松的阈值开始，并随 SCF 密度残差逐渐收紧：
+省略 `fft_grid` 与写成 `fft_grid = auto` 等价。程序先为所有实际 k 点生成
+截断平面波基组，再统计波函数频率及其两两频率差所需的最大整数频率。每个方向
+采用严格避开 Nyquist 边界的最小尺寸，并向上舍入到仅含 2、3、5 质因子的偶数，
+以兼顾无混叠和 FFT 效率。例如 12 Å 立方晶胞中的 10 Ha H 原子自动选择
+$72^3$。仍可用 `fft_grid = 72 72 72` 显式固定网格；若尺寸不足，程序会报错。
+
+外层 SCF 使用与 VASP `EDIFF` 类似的双能量判据：
+
+$$
+|dE|<\mathrm{EDIFF},\qquad |d\varepsilon|<\mathrm{EDIFF},
+$$
+
+其中 $dE$ 是变分总能变化，$d\varepsilon$ 是占据加权带能变化；二者共用
+`energy_tolerance_ha`，默认值为 $10^{-6}$ Ha。`rms(c)` 只保留为密度残差诊断，
+不再参与 SCF 退出判断。
+
+Davidson 内层求解默认从较松的阈值开始，并随 `rms(c)` 逐渐收紧：
 
 ```text
 density_tolerance = 1.0e-7
+energy_tolerance_ha = 1.0e-6
 eigensolver_initial_tolerance_ha = 1.0e-7
 eigensolver_tolerance_ha = 2.0e-10
 ```
 
-其中 `eigensolver_tolerance_ha` 始终是最终精度。即使密度和能量已经满足外层
-收敛条件，程序也会用该阈值再完成一次 Davidson 精修后才退出。把 initial 与
+这里 `density_tolerance` 只是调节 Davidson 精度的参考尺度，不是外层收敛限；
+`eigensolver_tolerance_ha` 始终是最终精度。即使 $dE$ 和 $d\varepsilon$ 已满足
+外层条件，程序也会用该阈值再完成一次 Davidson 精修后才退出。把 initial 与
 final 设成相同数值即可恢复固定容差。
 
 POSCAR 按标准 VASP 单位解释：晶格和 Cartesian 坐标为 Å，读入后自动转换为 Bohr；
@@ -254,9 +273,10 @@ $10^{-2}$、$5\times10^{-3}$ 和 $2\times10^{-3}$ Bohr；最后一个命令行�
 
 通用驱动支持 `calculation = relax`。优化变量是可移动原子的笛卡尔坐标，梯度取
 Mermin 自由能 `TOTEN` 的导数，即解析力的负值。相邻离子步直接复用上一步的密度
-和每个 k 点所属 MPI rank 上的轨道；固定晶胞下平面波基组不变，因此不需要轨道
-插值。体系信息和 k 点列表只在弛豫开始时输出一次；SCF 逐轮诊断默认隐藏，如需
-查看可显式设置 `verbosity = compact` 或 `verbosity = detailed`。紧凑 SCF
+和每个 k 点/自旋通道所属 MPI rank 上的轨道；固定晶胞下平面波基组不变，因此
+不需要轨道插值。体系信息和 k 点列表只在弛豫开始时输出一次；SCF 默认输出紧凑
+DAV 诊断，可用 `verbosity = silent` 隐藏，或用 `verbosity = detailed` 增加
+能带等细节。紧凑 SCF
 摘要中 `F=` 左侧的整数是该次电子计算实际完成的 SCF 轮数。
 
 ```bash
@@ -279,14 +299,13 @@ max_backtracks = 5
 force_tolerance_ha_bohr = 2.0e-4
 max_step_angstrom = 0.05
 bfgs_initial_curvature_ha_bohr2 = 0.10
-bfgs_curvature_tolerance = 1.0e-8
-energy_increase_tolerance_ha = 1.0e-8
 contcar = CONTCAR
 trajectory = si8_relaxation.xyz
 ```
 
 实现使用完整逆 Hessian BFGS，并包含最大原子位移限制、非下降方向重置、曲率
-检查和能量上升时的二分缩步。所有原子完全自由时，会投影掉三个整体平移零模；
+检查和能量上升时的二分缩步。曲率除法保护阈值与允许的 SCF 能量噪声均作为内部
+$10^{-8}$ 常量，不再暴露为输入参数。所有原子完全自由时，会投影掉三个整体平移零模；
 存在选择性约束时不做这一投影。`Selective dynamics` 保留 POSCAR 的
 坐标语义：Cartesian 输入的 `T/F` 约束笛卡尔方向，Direct 输入则约束相应晶格
 方向；后者会先正交化为同一允许位移子空间，再交给 BFGS。每个接受步都会更新当前
@@ -350,8 +369,22 @@ $$
 做两遍正交化；如果没有留下新的线性无关方向，就从 $(X,HX)$ 重启，而不是在同一个
 子空间里无限循环。
 
-SCF 行输出中的 `N_Hpsi` 是本轮对多少个向量实际施加了 Hamiltonian；末尾还会给出
-累计 `N_Hpsi`、`N_Hblock`、Davidson 迭代/重启数、`Hpsi_time`、子空间对角化时间和
+默认 SCF 行采用 VASP 风格：
+
+```text
+       N       E                     dE             d eps       ncg     rms          rms(c)
+DAV:   8    -0.3167089E+02        -0.1234E-07    -0.3921E-06    180   0.241E-08    0.715E-07
+```
+
+`E` 是含固定离子能的本轮变分能；`dE` 是相邻 SCF 轮的变分能变化；`d eps` 是
+占据加权带能
+$\sum_{\sigma\mathbf kn}w_{\mathbf k}f_{\sigma n\mathbf k}
+\varepsilon_{\sigma n\mathbf k}$ 的变化；`ncg` 是本轮实际 $H\psi$ 次数；`rms`
+是全部已求解能带的 Davidson 残差均方根；`rms(c)` 是输入和输出密度之差的
+范数。自旋计算对电荷密度与磁化密度残差取较大者；该值用于诊断和调整下一轮
+Davidson 精度，但不参与外层收敛判断。只有 `|dE|` 和 `|d eps|` 同时小于
+`energy_tolerance_ha` 才满足外层判据。末尾还会给出累计
+`N_Hpsi`、`N_Hblock`、Davidson 迭代/重启数、`Hpsi_time`、子空间对角化时间和
 SCF 总时间。平均 block 宽度可由 `N_Hpsi/N_Hblock` 估计。
 `h2_opt` 的每个几何点也会显示 `N_Hpsi`、`N_Hblock`、$H\psi$ 耗时与 SCF 耗时。
 可以用下面三组输入建立串行基线：
@@ -573,8 +606,11 @@ $$
 - `XC_LDA_X`：Slater/Dirac LDA exchange；
 - `XC_LDA_C_PZ`：Perdew–Zunger LDA correlation。
 
-初始接口保持 `XC_UNPOLARIZED`。LibXC 要求输入密度非负，因此进入库前只应
-清理数值噪声导致的微小负值，而不能用 density floor 改变正常低密度区域。
+`nspin = 1` 使用 `XC_UNPOLARIZED`；`nspin = 2` 将
+$\rho_\uparrow,\rho_\downarrow$ 按 LibXC 的交错布局送入 `XC_POLARIZED`，并取得
+$v_{\mathrm{xc},\uparrow}$ 和 $v_{\mathrm{xc},\downarrow}$。LibXC 要求输入密度
+非负，因此进入库前只应清理数值噪声导致的微小负值，而不能用 density floor
+改变正常低密度区域。
 上述解析 exchange 仍保留为单元测试 oracle；它不再是 SCF 的生产路径。
 `SCFOptions::lda_functional` 默认选择 `PerdewZunger`，也可选择
 `ExchangeOnly` 做回归比较。LibXC functional 对象在一次 SCF 开始前初始化，
@@ -603,12 +639,49 @@ $$
 E_{\mathrm{ext,loc}}=\int n(\mathbf r)V_{\mathrm{loc}}(\mathbf r)\,d\mathbf r.
 $$
 
-Fermi–Dirac 占据采用最大占据数 2：
+非自旋极化 Fermi–Dirac 占据的最大占据数为2：
 
 $$
 f_n=\frac{2}{\exp[(\varepsilon_n-\mu)/\sigma]+1},
 \qquad \sum_n f_n=N_e,
 $$
+
+共线自旋极化时，每个自旋轨道的最大占据数为1，且两个自旋通道共用一个费米能级：
+
+$$
+f_{n\mathbf k\sigma}
+=\frac{1}{\exp[(\varepsilon_{n\mathbf k\sigma}-\mu)/\sigma]+1},
+\qquad
+\sum_{\sigma\mathbf k n}w_{\mathbf k}f_{n\mathbf k\sigma}=N_e.
+$$
+
+输入中的
+
+```text
+nspin = 2
+starting_magnetization = 1.0
+```
+
+只用来构造第一轮的均匀自旋密度：
+
+$$
+N_\uparrow^{(0)}=\frac{N_e+M_0}{2},\qquad
+N_\downarrow^{(0)}=\frac{N_e-M_0}{2}.
+$$
+
+后续 $N_\uparrow-N_\downarrow$ 由共同费米能级和自洽能带决定，并没有被约束在
+$M_0$。最终输出
+
+$$
+M=N_\uparrow-N_\downarrow
+=\int_\Omega(\rho_\uparrow-\rho_\downarrow)\,d\mathbf r
+$$
+
+并以 $\mu_B$ 报告。可用单H原子示例做最小测试：
+
+```bash
+./pwdft examples/h_atom_spin_scf.in
+```
 
 其中 $\sigma=k_BT$。令 $p_n=f_n/2$，无量纲电子熵是
 
@@ -684,9 +757,10 @@ $$
 \right].
 $$
 
-当密度和能量第一次同时达标但 $\tau_n>\tau_f$ 时，下一轮直接切换到 $\tau_f$；
-只有这次严格求解后外层条件仍然成立，SCF 才被标记为收敛。`DAV:` 每行同时输出
-`rms(eig)` 与本轮 `eig_tol`，便于确认内外层精度是否匹配。
+当 $|dE|$ 和 $|d\varepsilon|$ 第一次同时达标但 $\tau_n>\tau_f$ 时，下一轮直接
+切换到 $\tau_f$；只有这次严格求解后两个能量判据仍然成立，SCF 才被标记为收敛。最终
+`eigensolver work` 摘要仍会报告累计工作量；`verbosity = detailed` 额外打印
+本轮 `eig_tol` 和最大能带残差。
 
 ## 7. 当前 Gaussian 离子模型
 
@@ -1149,9 +1223,8 @@ UPF 格式和字段定义参考
 
 ## 12. 下一步路线
 
-1. 在本地真实 `Si.pz-vbc.UPF` 上运行 `si2_force_check`，确认分项、全 SCF
-   和平移不变性判据全部通过；
-2. 将已通过内部分项检查的 Si₂ 能量、本征值和三维力与 Quantum ESPRESSO
-   做同参数数值交叉验证；
-3. 给主程序增加通用晶格、元素表和多离子坐标输入；
-4. 在能量、力和输入模型都稳定后实现通用几何优化器。
+1. 用相同 NC-UPF、cutoff、FFT 网格和超胞分别对H原子与 O₂ 做
+   Quantum ESPRESSO 共线自旋交叉验证；
+2. 为自旋极化总能量补充真实 UPF 的三维全 SCF 力有限差分；
+3. 在 LDA 自旋链路稳定后接入 LibXC PBE/GGA；
+4. 增加能带、总态密度和自旋分辨态密度输出。

@@ -19,8 +19,19 @@ struct XCResult {
     }
 };
 
+struct SpinXCResult {
+    std::vector<double> Vxc_up;
+    std::vector<double> Vxc_down;
+    double exchange_energy = 0.0;
+    double correlation_energy = 0.0;
+
+    double total_energy() const {
+        return exchange_energy + correlation_energy;
+    }
+};
+
 /*
- * Non-spin-polarized LDA wrapper around LibXC.
+ * Unpolarized or collinear spin-polarized LDA wrapper around LibXC.
  *
  * LibXC functional objects are initialized once and reused for every SCF
  * iteration. The implementation is hidden so public headers do not expose
@@ -28,7 +39,9 @@ struct XCResult {
  */
 class LibXCLDAFunctional {
 public:
-    explicit LibXCLDAFunctional(LDAFunctional functional);
+    explicit LibXCLDAFunctional(
+        LDAFunctional functional,
+        int nspin = 1);
     ~LibXCLDAFunctional();
 
     LibXCLDAFunctional(const LibXCLDAFunctional&) = delete;
@@ -38,6 +51,11 @@ public:
 
     XCResult evaluate(
         const std::vector<double>& density,
+        double dV) const;
+
+    SpinXCResult evaluate_spin(
+        const std::vector<double>& density_up,
+        const std::vector<double>& density_down,
         double dV) const;
 
 private:

@@ -1,27 +1,25 @@
 calculation = scf
-structure = POSCAR_Si
-pseudo = Si ../pseudopotentials/Si.pz-vbc.UPF
+structure = POSCAR_H_atom
+pseudo = H ../pseudopotentials/H.pz-vbc.UPF
 xc = pz_lda
 kpoints = gamma
 
-# Energies are Hartree unless the key explicitly says otherwise.
 ecut_ha = 10.0
 fft_grid = auto
 ewald_width_bohr = 0.70
 
 nelect = auto
-nbands = auto
-occupations = fermi_dirac
-smearing_ev = 0.05
+nbands = 8
+nspin = 2
+starting_magnetization = 1.0
+occupations = zero_t
 
-scf_max_iterations = 240
+scf_max_iterations = 200
 density_tolerance = 1.0e-7
 energy_tolerance_ha = 1.0e-6
-eigensolver_max_iterations = 100
+eigensolver_max_iterations = 80
 eigensolver_initial_tolerance_ha = 1.0e-7
 eigensolver_tolerance_ha = 2.0e-10
 mixing_alpha = 0.10
 pulay_max_history = 8
 pulay_min_history = 2
-pulay_regularization = 1.0e-12
-verbosity = compact

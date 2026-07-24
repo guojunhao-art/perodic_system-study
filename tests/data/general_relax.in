@@ -6,7 +6,7 @@ xc = pz_lda
 kpoints = gamma
 
 ecut_ha = 10.0
-fft_grid = 24 26 28
+fft_grid = auto
 nelect = auto
 nbands = auto
 occupations = zero_t
@@ -17,7 +17,5 @@ max_backtracks = 4
 force_tolerance_ha_bohr = 3.0e-4
 max_step_angstrom = 0.075
 bfgs_initial_curvature_ha_bohr2 = 0.20
-bfgs_curvature_tolerance = 2.0e-8
-energy_increase_tolerance_ha = 5.0e-9
 contcar = test.CONTCAR
 trajectory = test-relax.xyz

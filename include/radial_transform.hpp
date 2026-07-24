@@ -31,6 +31,17 @@ double radial_fourier_bessel_transform(
     const std::vector<double>& radial_function);
 
 /*
+ * Internal hot-path variant for data that has already been validated by a
+ * prepared pseudopotential species.  It skips the O(N_r) array checks.
+ */
+double radial_fourier_bessel_transform_unchecked(
+    int l,
+    double g,
+    const std::vector<double>& radial_grid,
+    const std::vector<double>& quadrature_weights,
+    const std::vector<double>& radial_function);
+
+/*
  * UPF stores u_l(r) = r f_l(r), rather than f_l(r). This equivalent form
  * evaluates
  *
@@ -39,6 +50,13 @@ double radial_fourier_bessel_transform(
  * without dividing by r at the origin.
  */
 double radial_fourier_bessel_transform_from_r_times_function(
+    int l,
+    double g,
+    const std::vector<double>& radial_grid,
+    const std::vector<double>& quadrature_weights,
+    const std::vector<double>& r_times_radial_function);
+
+double radial_fourier_bessel_transform_from_r_times_function_unchecked(
     int l,
     double g,
     const std::vector<double>& radial_grid,

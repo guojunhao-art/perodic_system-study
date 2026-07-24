@@ -54,4 +54,5 @@ std::vector<NonlocalProjector> build_upf_nonlocal_projectors(
     const Lattice& lattice,
     const PlaneWaveBasis3D& basis,
     const std::vector<UPFNonlocalSpecies>& species,
-    const std::vector<UPFLocalIon>& ions);
+    const std::vector<UPFLocalIon>& ions,
+    int thread_count = 1);

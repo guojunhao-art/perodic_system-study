@@ -8,6 +8,24 @@
 #include <string>
 #include <vector>
 
+struct SetupPerformanceBreakdown {
+    double upf_and_ions_seconds = 0.0;
+    double basis_and_fft_seconds = 0.0;
+    double nonlocal_projector_seconds = 0.0;
+    double local_potential_seconds = 0.0;
+    double ewald_energy_seconds = 0.0;
+    double total_seconds = 0.0;
+};
+
+struct ForcePerformanceBreakdown {
+    double density_fft_seconds = 0.0;
+    double local_seconds = 0.0;
+    double ion_ion_seconds = 0.0;
+    double nonlocal_seconds = 0.0;
+    double mpi_reduction_seconds = 0.0;
+    double total_seconds = 0.0;
+};
+
 struct SinglePointResult {
     bool converged = false;
     double ecut_hartree = 0.0;
@@ -21,6 +39,8 @@ struct SinglePointResult {
     SCFOptions options_used;
     KPointSCFResult scf;
     IonicForceComponents forces;
+    SetupPerformanceBreakdown setup_performance;
+    ForcePerformanceBreakdown force_performance;
 };
 
 std::array<int, 3> automatic_fft_grid_dimensions(

@@ -493,6 +493,41 @@ SCF 总时间。平均 block 宽度可由 `N_Hpsi/N_Hblock` 估计。性能汇�
 `unaccounted` 可用于发现尚未单独包住的对象构造、结果复制或日志开销。
 MPI 输出中的 SCF 阶段取最慢 rank，$H\psi$ 与密度内部计时则为 rank 求和；单 rank
 计算时二者都是普通墙钟时间。
+
+SCF 外的赝势和受力装配也会输出独立墙钟计时：
+
+```text
+setup wall time = ... s
+setup breakdown: UPF/ions = ...  basis/FFT = ...
+                 V_NL(projectors) = ...  V_loc(cache+FFT) = ...  Ewald = ... s
+post-SCF force wall time = ... s
+force breakdown: density FFT = ...  local = ...  ion-ion = ...
+                 nonlocal = ...  MPI reduction = ... s
+```
+
+局域 NC-UPF 径向变换
+
+$$
+V_s(G)=4\pi\int r^2j_0(Gr)\Delta V_s(r)\,dr+V_{s,\mathrm{Coul}}(G)
+$$
+
+现在先按精确相同的 $G^2$ 分组，只对“元素种类 × 不同径向模长”计算一次，再展开
+成与 $\mathbf G$ 对齐的缓存表。局域势装配只增加离子平移相位，SCF 后的局域
+Hellmann--Feynman 力直接复用同一张表，不再重新进行 Fourier--Bessel 积分。
+
+非局域 projector 同样按精确 $q^2$ 复用径向变换；实球谐函数和 $D_{ij}$ 对角化
+结果先按元素和 $k$ 点基组构造成无平移模板；同种元素的不同原子只需乘
+$\exp[-i(\mathbf G+\mathbf k)\cdot\mathbf R_I]$。MPI 计算仅在拥有该 $k$ 点的
+rank 上装配对应 projector。非局域力将所有 projector 排成矩阵 $B$，以
+
+$$
+O=B^\dagger C,\qquad
+\partial_aO=B^\dagger[iq_aC]
+$$
+
+的四次块矩阵乘法代替逐 projector、逐能带和逐方向分配长临时向量；启用外部
+BLAS 时这些乘法由 `zgemm` 执行。
+
 `h2_opt` 的每个几何点也会显示 `N_Hpsi`、`N_Hblock`、$H\psi$ 耗时与 SCF 耗时。
 可以用下面三组输入建立串行基线：
 

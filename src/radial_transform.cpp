@@ -61,21 +61,13 @@ void validate_radial_data(
 }
 
 template <typename RadialFactor>
-double transform_impl(
+double transform_impl_unchecked(
     int l,
     double g,
     const std::vector<double>& radial_grid,
     const std::vector<double>& quadrature_weights,
     const std::vector<double>& values,
     const RadialFactor& radial_factor) {
-
-    validate_radial_data(
-        l,
-        g,
-        radial_grid,
-        quadrature_weights,
-        values
-    );
 
     double integral = 0.0;
     for (int i = 0; i < static_cast<int>(radial_grid.size()); ++i) {
@@ -155,7 +147,30 @@ double radial_fourier_bessel_transform(
     const std::vector<double>& quadrature_weights,
     const std::vector<double>& radial_function) {
 
-    return transform_impl(
+    validate_radial_data(
+        l,
+        g,
+        radial_grid,
+        quadrature_weights,
+        radial_function
+    );
+    return radial_fourier_bessel_transform_unchecked(
+        l,
+        g,
+        radial_grid,
+        quadrature_weights,
+        radial_function
+    );
+}
+
+double radial_fourier_bessel_transform_unchecked(
+    int l,
+    double g,
+    const std::vector<double>& radial_grid,
+    const std::vector<double>& quadrature_weights,
+    const std::vector<double>& radial_function) {
+
+    return transform_impl_unchecked(
         l,
         g,
         radial_grid,
@@ -172,7 +187,30 @@ double radial_fourier_bessel_transform_from_r_times_function(
     const std::vector<double>& quadrature_weights,
     const std::vector<double>& r_times_radial_function) {
 
-    return transform_impl(
+    validate_radial_data(
+        l,
+        g,
+        radial_grid,
+        quadrature_weights,
+        r_times_radial_function
+    );
+    return radial_fourier_bessel_transform_from_r_times_function_unchecked(
+        l,
+        g,
+        radial_grid,
+        quadrature_weights,
+        r_times_radial_function
+    );
+}
+
+double radial_fourier_bessel_transform_from_r_times_function_unchecked(
+    int l,
+    double g,
+    const std::vector<double>& radial_grid,
+    const std::vector<double>& quadrature_weights,
+    const std::vector<double>& r_times_radial_function) {
+
+    return transform_impl_unchecked(
         l,
         g,
         radial_grid,

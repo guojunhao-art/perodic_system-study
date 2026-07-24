@@ -42,6 +42,24 @@ struct UPFLocalIon {
     Eigen::Vector3d frac_position = Eigen::Vector3d::Zero();
 };
 
+/*
+ * Position-independent reciprocal-space data shared by local-potential and
+ * local-force assembly.  The expensive radial Fourier--Bessel transform is
+ * evaluated once per species and FFT-grid vector; moving ions changes only
+ * the translation phases.
+ */
+struct UPFLocalReciprocalCache {
+    int n1 = 0;
+    int n2 = 0;
+    int n3 = 0;
+    int species_count = 0;
+    std::vector<Eigen::Vector3d> g_cart;
+    std::vector<double> species_kernels;
+
+    int grid_size() const;
+    double kernel(int species_index, int grid_index) const;
+};
+
 UPFLocalSpecies prepare_upf_local_species(
     const UPFData& upf,
     double gaussian_width_bohr);
@@ -77,14 +95,32 @@ double upf_local_kernel_G(
     const UPFLocalSpecies& species,
     double g_bohr_inverse);
 
+UPFLocalReciprocalCache build_upf_local_reciprocal_cache(
+    const Lattice& lattice,
+    const FFTGrid& grid,
+    const std::vector<UPFLocalSpecies>& species,
+    int thread_count = 1);
+
 /*
  * Periodic Fourier-series coefficients, including ionic translation phases.
  * Coefficients have units of Hartree and include the 1/Omega factor.
  */
 std::vector<std::complex<double>> build_upf_local_potential_G(
     const Lattice& lattice,
+    const UPFLocalReciprocalCache& cache,
+    const std::vector<UPFLocalIon>& ions,
+    int thread_count = 1);
+
+std::vector<std::complex<double>> build_upf_local_potential_G(
+    const Lattice& lattice,
     const FFTGrid& grid,
     const std::vector<UPFLocalSpecies>& species,
+    const std::vector<UPFLocalIon>& ions);
+
+std::vector<double> build_upf_local_potential_real(
+    const Lattice& lattice,
+    FFTWorkspace& fft,
+    const UPFLocalReciprocalCache& cache,
     const std::vector<UPFLocalIon>& ions);
 
 std::vector<double> build_upf_local_potential_real(

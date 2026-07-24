@@ -143,7 +143,7 @@ Eigen::MatrixXcd orthonormalize_correction_block(
     const double roundoff_threshold =
         64.0
         * std::numeric_limits<double>::epsilon()
-        * static_cast<double>(std::max(1, T.cols()))
+        * static_cast<double>(T.cols())
         * largest_eigenvalue;
     const double eigenvalue_threshold = std::max(
         drop_tol * drop_tol,

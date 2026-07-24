@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -43,6 +44,116 @@ std::vector<double> make_test_potential(const FFTGrid& grid) {
         }
     }
     return potential;
+}
+
+Eigen::MatrixXcd make_deterministic_matrix(
+    int rows,
+    int cols,
+    int offset = 0) {
+
+    Eigen::MatrixXcd matrix(rows, cols);
+    for (int j = 0; j < cols; ++j) {
+        for (int i = 0; i < rows; ++i) {
+            const double x = static_cast<double>(
+                (i + 1) * (j + offset + 2)
+            );
+            matrix(i, j) = std::complex<double>(
+                std::sin(0.137 * x + 0.31 * (j + offset)),
+                std::cos(0.193 * x - 0.17 * (j + offset))
+            );
+        }
+    }
+    return matrix;
+}
+
+void test_block_correction_orthonormalization() {
+    constexpr int rows = 128;
+    constexpr int subspace_columns = 7;
+
+    const Eigen::MatrixXcd subspace = orthonormalize_columns(
+        make_deterministic_matrix(rows, subspace_columns)
+    );
+    const Eigen::MatrixXcd independent =
+        make_deterministic_matrix(rows, 3, 13);
+
+    Eigen::MatrixXcd raw(rows, 4);
+    raw.leftCols(3) = independent;
+    raw.col(3) = raw.col(0) - 0.375 * raw.col(1);
+
+    const Eigen::MatrixXcd coefficients =
+        make_deterministic_matrix(
+            subspace_columns,
+            raw.cols(),
+            29
+        );
+    raw.noalias() += 20.0 * subspace * coefficients;
+
+    CorrectionOrthogonalizationInfo difficult_info;
+    const Eigen::MatrixXcd correction =
+        orthonormalize_correction_block(
+            subspace,
+            raw,
+            1.0e-14,
+            &difficult_info
+        );
+
+    if (correction.cols() != 3) {
+        throw std::runtime_error(
+            "Block correction orthogonalization did not drop a "
+            "dependent direction."
+        );
+    }
+
+    const double cross_error =
+        (subspace.adjoint() * correction).norm();
+    const double internal_error = (
+        correction.adjoint() * correction
+        - Eigen::MatrixXcd::Identity(
+            correction.cols(),
+            correction.cols()
+        )
+    ).norm();
+
+    require_less(
+        cross_error,
+        1.0e-11,
+        "block correction/subspace orthogonality error"
+    );
+    require_less(
+        internal_error,
+        1.0e-11,
+        "block correction internal orthogonality error"
+    );
+    if (difficult_info.projection_passes != 2) {
+        throw std::runtime_error(
+            "DGKS did not reorthogonalize a strongly projected block."
+        );
+    }
+
+    Eigen::MatrixXcd nearly_orthogonal =
+        make_deterministic_matrix(rows, 3, 47);
+    const Eigen::MatrixXcd initial_projection =
+        subspace.adjoint() * nearly_orthogonal;
+    nearly_orthogonal.noalias() -=
+        subspace * initial_projection;
+    CorrectionOrthogonalizationInfo easy_info;
+    const Eigen::MatrixXcd easy_correction =
+        orthonormalize_correction_block(
+            subspace,
+            nearly_orthogonal,
+            1.0e-14,
+            &easy_info
+        );
+    if (easy_info.projection_passes != 1) {
+        throw std::runtime_error(
+            "DGKS unnecessarily reorthogonalized an orthogonal block."
+        );
+    }
+    require_less(
+        (subspace.adjoint() * easy_correction).norm(),
+        1.0e-11,
+        "single-pass correction/subspace orthogonality error"
+    );
 }
 
 void test_davidson_against_dense_reference() {
@@ -147,12 +258,44 @@ void test_davidson_against_dense_reference() {
             "Davidson made more H block calls than iterations."
         );
     }
+    if (result.timing.projected_matrix_full_builds != 1 ||
+        result.timing.projected_matrix_incremental_updates <= 0 ||
+        result.timing.correction_blocks <= 0 ||
+        result.timing.correction_reorthogonalizations >
+            result.timing.correction_blocks) {
+        throw std::runtime_error(
+            "Davidson incremental projection counters are inconsistent."
+        );
+    }
+
+    const DavidsonTimingBreakdown& timing = result.timing;
+    const double detailed_other = timing.detailed_other_seconds();
+    const double total_other =
+        result.total_seconds
+        - result.hamiltonian_seconds
+        - result.subspace_diagonalization_seconds;
+    if (timing.initial_orthonormalization_seconds < 0.0 ||
+        timing.projected_matrix_seconds < 0.0 ||
+        timing.ritz_rotation_seconds < 0.0 ||
+        timing.residual_preconditioner_seconds < 0.0 ||
+        timing.result_copy_seconds < 0.0 ||
+        timing.correction_orthogonalization_seconds < 0.0 ||
+        timing.restart_seconds < 0.0 ||
+        timing.correction_block_assembly_seconds < 0.0 ||
+        timing.subspace_expansion_seconds < 0.0 ||
+        detailed_other <= 0.0 ||
+        detailed_other > total_other + 1.0e-9) {
+        throw std::runtime_error(
+            "Davidson detailed timing is incomplete or double-counted."
+        );
+    }
 }
 
 } // namespace
 
 int main() {
     try {
+        test_block_correction_orthonormalization();
         test_davidson_against_dense_reference();
         std::cout << "Davidson regression test passed.\n";
         return 0;

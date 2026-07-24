@@ -9,6 +9,90 @@
 #include <limits>
 #include <stdexcept>
 
+namespace {
+
+double elapsed_seconds(
+    std::chrono::steady_clock::time_point start) {
+
+    return std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - start
+    ).count();
+}
+
+void update_projected_hamiltonian(
+    Eigen::MatrixXcd& projected,
+    int& projected_size,
+    const Eigen::MatrixXcd& V,
+    const Eigen::MatrixXcd& W,
+    int subspace_size,
+    double& hermiticity_error,
+    DavidsonTimingBreakdown& timing) {
+
+    if (projected_size < 0 ||
+        projected_size > subspace_size ||
+        subspace_size > projected.rows() ||
+        subspace_size > projected.cols()) {
+        throw std::runtime_error(
+            "Invalid incremental projected-Hamiltonian dimensions."
+        );
+    }
+    if (projected_size == subspace_size) {
+        return;
+    }
+
+    const int old_size = projected_size;
+    const int added = subspace_size - old_size;
+
+    /*
+     * Hsub is Hermitian. On expansion V'=[V,T], W'=[W,HT], retain the
+     * existing old-old block and compute only
+     *
+     *   V_old† HT  and  T† HT.
+     *
+     * The lower cross block is filled by Hermitian symmetry, avoiding the
+     * redundant T†W_old product. This changes repeated full V†W rebuilds
+     * into one initial build plus incremental upper-triangle updates.
+     */
+    if (old_size > 0) {
+        Eigen::MatrixXcd cross(old_size, added);
+        cross.noalias() =
+            V.leftCols(old_size).adjoint()
+            * W.middleCols(old_size, added);
+        projected.block(0, old_size, old_size, added) = cross;
+        projected.block(old_size, 0, added, old_size) =
+            cross.adjoint();
+        timing.projected_matrix_incremental_updates += 1;
+    } else {
+        timing.projected_matrix_full_builds += 1;
+    }
+
+    Eigen::MatrixXcd diagonal_block(added, added);
+    diagonal_block.noalias() =
+        V.middleCols(old_size, added).adjoint()
+        * W.middleCols(old_size, added);
+    hermiticity_error =
+        (diagonal_block - diagonal_block.adjoint()).norm();
+    projected.block(old_size, old_size, added, added) =
+        0.5 * (diagonal_block + diagonal_block.adjoint());
+    projected_size = subspace_size;
+}
+
+void reuse_ritz_projected_hamiltonian(
+    Eigen::MatrixXcd& projected,
+    int& projected_size,
+    const Eigen::VectorXd& eigenvalues,
+    DavidsonTimingBreakdown& timing) {
+
+    const int count = eigenvalues.size();
+    projected.topLeftCorner(count, count).setZero();
+    projected.diagonal().head(count) =
+        eigenvalues.cast<std::complex<double>>();
+    projected_size = count;
+    timing.projected_matrix_ritz_reuses += 1;
+}
+
+} // namespace
+
 Eigen::MatrixXcd orthonormalize_columns(
     const Eigen::MatrixXcd& A,
     double drop_tol) {
@@ -62,6 +146,135 @@ Eigen::MatrixXcd append_columns(
     }
 
     return B;
+}
+
+Eigen::MatrixXcd orthonormalize_correction_block(
+    const Eigen::Ref<const Eigen::MatrixXcd>& subspace,
+    const Eigen::Ref<const Eigen::MatrixXcd>& raw_corrections,
+    double drop_tol,
+    CorrectionOrthogonalizationInfo* info) {
+
+    if (info != nullptr) {
+        info->projection_passes = 0;
+    }
+
+    if (subspace.rows() != raw_corrections.rows()) {
+        throw std::runtime_error(
+            "Correction block and Davidson subspace row sizes differ."
+        );
+    }
+    if (!std::isfinite(drop_tol) || drop_tol < 0.0) {
+        throw std::runtime_error(
+            "Correction block drop tolerance must be finite and nonnegative."
+        );
+    }
+    if (raw_corrections.cols() == 0) {
+        return Eigen::MatrixXcd(raw_corrections.rows(), 0);
+    }
+
+    Eigen::MatrixXcd T = raw_corrections;
+
+    /*
+     * Block classical Gram--Schmidt with the Daniel--Gragg--Kaufman--Stewart
+     * (DGKS) reorthogonalization criterion. The first pass is mandatory:
+     *
+     *   T <- T - V(V†T).
+     *
+     * A second block pass is needed only when a column loses more than half
+     * of its norm, which signals substantial cancellation against V. This
+     * retains the stable two-pass path for difficult corrections while
+     * avoiding two GEMMs for already-nearly-orthogonal blocks.
+     */
+    if (subspace.cols() > 0) {
+        constexpr double dgks_reorthogonalization_threshold = 0.5;
+        const Eigen::VectorXd norms_before =
+            T.colwise().norm().transpose();
+        Eigen::MatrixXcd coefficients(
+            subspace.cols(),
+            T.cols()
+        );
+        coefficients.noalias() = subspace.adjoint() * T;
+        T.noalias() -= subspace * coefficients;
+        if (info != nullptr) {
+            info->projection_passes = 1;
+        }
+
+        const Eigen::VectorXd norms_after =
+            T.colwise().norm().transpose();
+        bool needs_reorthogonalization = false;
+        for (int j = 0; j < T.cols(); ++j) {
+            if (norms_before[j] > 0.0 &&
+                norms_after[j]
+                    < dgks_reorthogonalization_threshold
+                        * norms_before[j]) {
+                needs_reorthogonalization = true;
+                break;
+            }
+        }
+        if (needs_reorthogonalization) {
+            coefficients.noalias() = subspace.adjoint() * T;
+            T.noalias() -= subspace * coefficients;
+            if (info != nullptr) {
+                info->projection_passes = 2;
+            }
+        }
+    }
+
+    /*
+     * Symmetric block orthogonalization from the small Gram matrix:
+     *
+     *   S = T†T = U Lambda U†
+     *   Q = T U Lambda^{-1/2}.
+     *
+     * Eigenvalues below the absolute vector drop tolerance or the roundoff
+     * floor of S are discarded, so dependent correction directions do not
+     * enter the Davidson subspace.
+     */
+    Eigen::MatrixXcd gram(T.cols(), T.cols());
+    gram.noalias() = T.adjoint() * T;
+    gram = 0.5 * (gram + gram.adjoint());
+
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> solver(gram);
+    if (solver.info() != Eigen::Success) {
+        throw std::runtime_error(
+            "Correction-block Gram diagonalization failed."
+        );
+    }
+
+    const Eigen::VectorXd eigenvalues = solver.eigenvalues();
+    const double largest_eigenvalue =
+        std::max(0.0, eigenvalues[eigenvalues.size() - 1]);
+    const double roundoff_threshold =
+        64.0
+        * std::numeric_limits<double>::epsilon()
+        * static_cast<double>(T.cols())
+        * largest_eigenvalue;
+    const double eigenvalue_threshold = std::max(
+        drop_tol * drop_tol,
+        roundoff_threshold
+    );
+
+    int first_kept = 0;
+    while (first_kept < eigenvalues.size() &&
+           eigenvalues[first_kept] <= eigenvalue_threshold) {
+        ++first_kept;
+    }
+
+    const int kept = eigenvalues.size() - first_kept;
+    if (kept == 0) {
+        return Eigen::MatrixXcd(T.rows(), 0);
+    }
+
+    Eigen::MatrixXcd transform =
+        solver.eigenvectors().rightCols(kept);
+    for (int j = 0; j < kept; ++j) {
+        transform.col(j) /=
+            std::sqrt(eigenvalues[first_kept + j]);
+    }
+
+    Eigen::MatrixXcd Q(T.rows(), kept);
+    Q.noalias() = T * transform;
+    return Q;
 }
 
 Eigen::MatrixXcd initial_low_kinetic_trials(
@@ -132,15 +345,20 @@ DavidsonResult davidson_lowest_eigenstates(
     }
 
     DavidsonResult result;
+    const auto davidson_start = std::chrono::steady_clock::now();
 
-    Eigen::MatrixXcd V = orthonormalize_columns(initial_trials);
+    auto phase_start = std::chrono::steady_clock::now();
+    Eigen::MatrixXcd initial_subspace =
+        orthonormalize_columns(initial_trials);
+    result.timing.initial_orthonormalization_seconds +=
+        elapsed_seconds(phase_start);
 
-    if (V.cols() < nbands) {
+    if (initial_subspace.cols() < nbands) {
         throw std::runtime_error(
             "Initial trials became rank-deficient after orthonormalization."
         );
     }
-    if (V.cols() > max_subspace) {
+    if (initial_subspace.cols() > max_subspace) {
         throw std::runtime_error(
             "Initial Davidson subspace exceeds max_subspace."
         );
@@ -168,7 +386,21 @@ DavidsonResult davidson_lowest_eigenstates(
         return image;
     };
 
-    Eigen::MatrixXcd W = apply_hamiltonian_counted(V);
+    /*
+     * Allocate the maximum Davidson capacity once. Only the first
+     * subspace_size columns are active; expansion and thick restart write
+     * into these buffers without reallocating and copying all old columns.
+     */
+    Eigen::MatrixXcd V(nbasis, max_subspace);
+    Eigen::MatrixXcd W(nbasis, max_subspace);
+    Eigen::MatrixXcd projected =
+        Eigen::MatrixXcd::Zero(max_subspace, max_subspace);
+    int projected_size = 0;
+    int subspace_size = initial_subspace.cols();
+    V.leftCols(subspace_size) = initial_subspace;
+    W.leftCols(subspace_size) =
+        apply_hamiltonian_counted(initial_subspace);
+
     double residual_at_last_empty_restart =
         std::numeric_limits<double>::infinity();
     int unsuccessful_empty_restarts = 0;
@@ -177,20 +409,26 @@ DavidsonResult davidson_lowest_eigenstates(
 
     for (int iter = 0; iter < max_iter; ++iter) {
         result.iterations = iter + 1;
-        result.final_subspace_size = V.cols();
+        result.final_subspace_size = subspace_size;
 
+        phase_start = std::chrono::steady_clock::now();
         /*
-         * 1. H_sub = V† H V = V† W
+         * 1. Incrementally update H_sub = V†W, then copy only the active
+         * small matrix for diagonalization.
          */
-        Eigen::MatrixXcd Hsub = V.adjoint() * W;
-        result.projected_hermiticity_error =
-            (Hsub - Hsub.adjoint()).norm();
-
-        /*
-         * Enforce Hermiticity numerically.
-         * This removes tiny roundoff asymmetry.
-         */
-        Hsub = 0.5 * (Hsub + Hsub.adjoint());
+        update_projected_hamiltonian(
+            projected,
+            projected_size,
+            V,
+            W,
+            subspace_size,
+            result.projected_hermiticity_error,
+            result.timing
+        );
+        const Eigen::MatrixXcd Hsub =
+            projected.topLeftCorner(subspace_size, subspace_size);
+        result.timing.projected_matrix_seconds +=
+            elapsed_seconds(phase_start);
 
         /*
          * 2. Diagonalize subspace Hamiltonian.
@@ -221,16 +459,23 @@ DavidsonResult davidson_lowest_eigenstates(
          *    X  = V A
          *    HX = W A
          */
-        Eigen::MatrixXcd X = V * A;
-        Eigen::MatrixXcd HX = W * A;
+        phase_start = std::chrono::steady_clock::now();
+        Eigen::MatrixXcd X(nbasis, nbands);
+        Eigen::MatrixXcd HX(nbasis, nbands);
+        X.noalias() = V.leftCols(subspace_size) * A;
+        HX.noalias() = W.leftCols(subspace_size) * A;
+        result.timing.ritz_rotation_seconds +=
+            elapsed_seconds(phase_start);
 
         /*
          * 4. Residuals:
          *
          *    r_i = Hx_i - eps_i x_i
          */
+        phase_start = std::chrono::steady_clock::now();
         std::vector<double> residual_norms(nbands, 0.0);
-        std::vector<Eigen::VectorXcd> correction_vectors;
+        Eigen::MatrixXcd raw_corrections(nbasis, nbands);
+        int correction_count = 0;
 
         bool all_converged = true;
         double maximum_residual = 0.0;
@@ -257,8 +502,6 @@ DavidsonResult davidson_lowest_eigenstates(
                  *
                  * where D(G) ≈ kinetic(G).
                  */
-                Eigen::VectorXcd t(nbasis);
-
                 for (int ig = 0; ig < nbasis; ++ig) {
                     double denom =
                         basis.gvectors[ig].kinetic - eps[ib];
@@ -269,22 +512,28 @@ DavidsonResult davidson_lowest_eigenstates(
                               : -denom_floor;
                     }
 
-                    t[ig] = -r[ig] / denom;
+                    raw_corrections(ig, correction_count) =
+                        -r[ig] / denom;
                 }
 
-                correction_vectors.push_back(t);
+                ++correction_count;
             }
         }
+        result.timing.residual_preconditioner_seconds +=
+            elapsed_seconds(phase_start);
 
+        phase_start = std::chrono::steady_clock::now();
         result.eigenvalues = eps;
         result.eigenvectors = X;
         result.residual_norms = residual_norms;
         result.converged = all_converged;
         result.max_residual_band = maximum_residual_band;
+        result.timing.result_copy_seconds +=
+            elapsed_seconds(phase_start);
 
         if (verbose) {
             std::cout << "Davidson iter " << std::setw(3) << iter + 1
-                      << "  subspace = " << std::setw(4) << V.cols()
+                      << "  subspace = " << std::setw(4) << subspace_size
                       << "  eps[0] = " << std::setw(20) << eps[0]
                       << "  max_res = " << maximum_residual
                       << "  band = " << maximum_residual_band
@@ -293,31 +542,31 @@ DavidsonResult davidson_lowest_eigenstates(
         }
 
         if (all_converged) {
+            result.total_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - davidson_start
+            ).count();
             return result;
         }
 
         /*
          * 6. Orthogonalize corrections against V and one another before
-         * deciding whether the subspace needs a restart. Two passes suppress
-         * loss of orthogonality for nearly converged vectors.
+         * deciding whether the subspace needs a restart. DGKS requests a
+         * second pass only after substantial cancellation in the first.
          */
-        std::vector<Eigen::VectorXcd> accepted;
-        accepted.reserve(correction_vectors.size());
-        for (const Eigen::VectorXcd& t_raw : correction_vectors) {
-            Eigen::VectorXcd t = t_raw;
-
-            for (int pass = 0; pass < 2; ++pass) {
-                t -= V * (V.adjoint() * t);
-                for (const Eigen::VectorXcd& q : accepted) {
-                    t -= q * q.dot(t);
-                }
-            }
-
-            const double nrm = t.norm();
-            if (nrm > correction_drop_tolerance) {
-                accepted.push_back(t / nrm);
-            }
+        phase_start = std::chrono::steady_clock::now();
+        CorrectionOrthogonalizationInfo correction_info;
+        Eigen::MatrixXcd T = orthonormalize_correction_block(
+            V.leftCols(subspace_size),
+            raw_corrections.leftCols(correction_count),
+            correction_drop_tolerance,
+            &correction_info
+        );
+        result.timing.correction_blocks += 1;
+        if (correction_info.projection_passes > 1) {
+            result.timing.correction_reorthogonalizations += 1;
         }
+        result.timing.correction_orthogonalization_seconds +=
+            elapsed_seconds(phase_start);
 
         /*
          * If every raw correction was removed by orthogonalization, the old
@@ -326,7 +575,7 @@ DavidsonResult davidson_lowest_eigenstates(
          * Ritz block and stop with a diagnostic after repeated no-progress
          * restarts.
          */
-        if (accepted.empty()) {
+        if (T.cols() == 0) {
             result.stagnation_restarts += 1;
             result.subspace_restarts += 1;
 
@@ -338,13 +587,27 @@ DavidsonResult davidson_lowest_eigenstates(
                 : unsuccessful_empty_restarts + 1;
             residual_at_last_empty_restart = maximum_residual;
 
-            V = X;
-            W = HX;
-            result.final_subspace_size = V.cols();
+            phase_start = std::chrono::steady_clock::now();
+            V.leftCols(nbands) = X;
+            W.leftCols(nbands) = HX;
+            subspace_size = nbands;
+            reuse_ritz_projected_hamiltonian(
+                projected,
+                projected_size,
+                eps,
+                result.timing
+            );
+            result.projected_hermiticity_error = 0.0;
+            result.timing.restart_seconds +=
+                elapsed_seconds(phase_start);
+            result.final_subspace_size = subspace_size;
 
             if (unsuccessful_empty_restarts
                 >= maximum_unsuccessful_empty_restarts) {
                 result.stagnated = true;
+                result.total_seconds = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - davidson_start
+                ).count();
                 return result;
             }
             continue;
@@ -354,11 +617,22 @@ DavidsonResult davidson_lowest_eigenstates(
          * 7. Thick restart: X and HX are already matching Ritz/image pairs,
          * so no new H application is required by the restart itself.
          */
-        if (V.cols() + static_cast<int>(accepted.size()) > max_subspace) {
-            V = X;
-            W = HX;
+        if (subspace_size + T.cols() > max_subspace) {
+            phase_start = std::chrono::steady_clock::now();
+            V.leftCols(nbands) = X;
+            W.leftCols(nbands) = HX;
+            subspace_size = nbands;
+            reuse_ritz_projected_hamiltonian(
+                projected,
+                projected_size,
+                eps,
+                result.timing
+            );
+            result.projected_hermiticity_error = 0.0;
+            result.timing.restart_seconds +=
+                elapsed_seconds(phase_start);
             result.subspace_restarts += 1;
-            result.final_subspace_size = V.cols();
+            result.final_subspace_size = subspace_size;
             continue;
         }
 
@@ -366,22 +640,20 @@ DavidsonResult davidson_lowest_eigenstates(
          * 8. Apply H only to genuinely new orthonormal directions, then
          * append the matching (V, HV) column blocks.
          */
-        Eigen::MatrixXcd T(nbasis, static_cast<int>(accepted.size()));
-        for (int j = 0; j < static_cast<int>(accepted.size()); ++j) {
-            T.col(j) = accepted[j];
-        }
         const Eigen::MatrixXcd HT = apply_hamiltonian_counted(T);
-        V = append_columns(V, accepted);
 
-        std::vector<Eigen::VectorXcd> haccepted;
-        haccepted.reserve(HT.cols());
-        for (int j = 0; j < HT.cols(); ++j) {
-            haccepted.push_back(HT.col(j));
-        }
-        W = append_columns(W, haccepted);
-        result.final_subspace_size = V.cols();
+        phase_start = std::chrono::steady_clock::now();
+        V.middleCols(subspace_size, T.cols()) = T;
+        W.middleCols(subspace_size, T.cols()) = HT;
+        subspace_size += T.cols();
+        result.timing.subspace_expansion_seconds +=
+            elapsed_seconds(phase_start);
+        result.final_subspace_size = subspace_size;
     }
 
+    result.total_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - davidson_start
+    ).count();
     return result;
 }
 

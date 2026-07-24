@@ -71,6 +71,12 @@ double maximum_residual(const std::vector<double>& residuals) {
     return result;
 }
 
+double elapsed_seconds(std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - start
+    ).count();
+}
+
 void print_compact_header(std::ostream& out) {
     out << "\n"
         << "       N       E                     dE"
@@ -162,6 +168,25 @@ void print_compact_summary(
         result.energy.free_energy + result.energy.ion_smooth;
     const double sigma0_with_ions =
         result.energy.sigma0_estimate + result.energy.ion_smooth;
+    const FFTPerformanceCounters& fft_timing = result.performance.fft;
+    const double hpsi_accounted =
+        fft_timing.hamiltonian_scatter_seconds
+        + fft_timing.hamiltonian_backward_fft_seconds
+        + fft_timing.hamiltonian_local_multiply_seconds
+        + fft_timing.hamiltonian_forward_fft_seconds
+        + fft_timing.hamiltonian_gather_kinetic_seconds
+        + fft_timing.hamiltonian_nonlocal_seconds;
+    const double hpsi_overhead = std::max(
+        0.0,
+        result.eigensolver_hamiltonian_seconds - hpsi_accounted
+    );
+    const DavidsonTimingBreakdown& davidson =
+        result.eigensolver_detail;
+    const double davidson_unaccounted = std::max(
+        0.0,
+        result.eigensolver_other_seconds
+            - davidson.detailed_other_seconds()
+    );
 
     out << "--------------------------------------------------------------------------------\n"
         << " " << std::setw(4) << result.iterations
@@ -179,8 +204,66 @@ void print_compact_summary(
         << "  Hpsi_time = " << std::fixed << std::setprecision(3)
         << result.eigensolver_hamiltonian_seconds << " s"
         << "  subspace_time = "
-        << result.eigensolver_subspace_seconds << " s\n"
-        << "  SCF wall time = " << result.wall_time_seconds << " s\n";
+        << result.eigensolver_subspace_seconds << " s"
+        << "  ortho/Ritz/other = "
+        << result.eigensolver_other_seconds << " s\n"
+        << "  Davidson breakdown: initial_ortho = "
+        << davidson.initial_orthonormalization_seconds
+        << "  VtW = " << davidson.projected_matrix_seconds
+        << "  Ritz(X/HX) = " << davidson.ritz_rotation_seconds
+        << "  residual+prec = "
+        << davidson.residual_preconditioner_seconds
+        << "  result_copy = " << davidson.result_copy_seconds
+        << "  correction_ortho = "
+        << davidson.correction_orthogonalization_seconds << " s\n"
+        << "  Davidson update: restart = "
+        << davidson.restart_seconds
+        << "  assemble(T) = "
+        << davidson.correction_block_assembly_seconds
+        << "  expand/copy = "
+        << davidson.subspace_expansion_seconds
+        << "  unaccounted = " << davidson_unaccounted << " s\n"
+        << "  Davidson reuse: VtW full/incremental/Ritz = "
+        << davidson.projected_matrix_full_builds << "/"
+        << davidson.projected_matrix_incremental_updates << "/"
+        << davidson.projected_matrix_ritz_reuses
+        << "  correction reorth/blocks = "
+        << davidson.correction_reorthogonalizations << "/"
+        << davidson.correction_blocks << "\n"
+        << "  SCF wall time = " << result.wall_time_seconds << " s\n"
+        << "  phase wall time: V_in = "
+        << result.performance.input_potential_seconds
+        << "  eigensolver = " << result.performance.eigensolver_seconds
+        << "  occupations = " << result.performance.occupations_seconds
+        << "  density/kinetic = "
+        << result.performance.density_energy_seconds
+        << "  V_out/energy = "
+        << result.performance.output_potential_energy_seconds
+        << "  mixing = " << result.performance.mixing_seconds << " s\n"
+        << "  Hpsi breakdown: vectors/blocks = "
+        << result.performance.fft.hamiltonian_vectors << " / "
+        << result.performance.fft.hamiltonian_block_calls
+        << "  scatter = "
+        << result.performance.fft.hamiltonian_scatter_seconds
+        << "  FFT(back/forward) = "
+        << result.performance.fft.hamiltonian_backward_fft_seconds
+        << " / "
+        << result.performance.fft.hamiltonian_forward_fft_seconds
+        << "  V(r)*psi = "
+        << result.performance.fft.hamiltonian_local_multiply_seconds
+        << "  gather+T = "
+        << result.performance.fft.hamiltonian_gather_kinetic_seconds
+        << "  V_NL = "
+        << result.performance.fft.hamiltonian_nonlocal_seconds
+        << "  overhead = " << hpsi_overhead << " s\n"
+        << "  density breakdown: orbitals = "
+        << result.performance.fft.density_orbitals
+        << "  scatter = "
+        << result.performance.fft.density_scatter_seconds
+        << "  FFT(back) = "
+        << result.performance.fft.density_backward_fft_seconds
+        << "  accumulate = "
+        << result.performance.fft.density_accumulation_seconds << " s\n";
 
     out.flags(old_flags);
     out.precision(old_precision);
@@ -200,6 +283,7 @@ SCFResult run_scf(
     std::ostream* log_stream) {
 
     const auto scf_start = std::chrono::steady_clock::now();
+    const FFTPerformanceCounters fft_performance_start = fft.performance;
 
     validate_scf_inputs(
         basis,
@@ -260,6 +344,7 @@ SCFResult run_scf(
 
     for (int iter = 0; iter < options.max_iterations; ++iter) {
         const double eigensolver_tolerance = eigensolver_tolerances.current();
+        auto phase_start = std::chrono::steady_clock::now();
         const auto VH = build_hartree_potential(lattice, fft, rho);
         const auto xc_input = xc.evaluate(rho, dV);
         const auto Veff = combine_effective_potential(
@@ -267,7 +352,10 @@ SCFResult run_scf(
             VH,
             xc_input.Vxc
         );
+        result.performance.input_potential_seconds +=
+            elapsed_seconds(phase_start);
 
+        phase_start = std::chrono::steady_clock::now();
         const DavidsonResult ks = davidson_lowest_eigenstates(
             basis,
             fft,
@@ -281,6 +369,8 @@ SCFResult run_scf(
             projector_ptr,
             logging_enabled && options.verbosity == SCFVerbosity::Detailed
         );
+        result.performance.eigensolver_seconds +=
+            elapsed_seconds(phase_start);
         if (!ks.converged) {
             const double maximum_ks_residual =
                 maximum_residual(ks.residual_norms);
@@ -312,7 +402,14 @@ SCFResult run_scf(
             ks.hamiltonian_seconds;
         result.eigensolver_subspace_seconds +=
             ks.subspace_diagonalization_seconds;
+        result.eigensolver_other_seconds += std::max(
+            0.0,
+            ks.total_seconds - ks.hamiltonian_seconds
+                - ks.subspace_diagonalization_seconds
+        );
+        result.eigensolver_detail.accumulate(ks.timing);
 
+        phase_start = std::chrono::steady_clock::now();
         const OccupationResult occupations = compute_occupations(
             ks.eigenvalues,
             options.nelec,
@@ -321,7 +418,10 @@ SCFResult run_scf(
             options.smearing_sigma,
             options.degeneracy_tolerance
         );
+        result.performance.occupations_seconds +=
+            elapsed_seconds(phase_start);
 
+        phase_start = std::chrono::steady_clock::now();
         const Eigen::MatrixXcd orbitals =
             ks.eigenvectors.leftCols(options.nbands);
         const auto rho_out = build_density_from_orbitals(
@@ -332,14 +432,17 @@ SCFResult run_scf(
             volume
         );
 
-        const auto VH_out = build_hartree_potential(lattice, fft, rho_out);
-        const auto xc_output = xc.evaluate(rho_out, dV);
         const double nonlocal_energy = compute_nonlocal_energy(
             projectors,
             orbitals,
             occupations.occ
         );
+        result.performance.density_energy_seconds +=
+            elapsed_seconds(phase_start);
 
+        phase_start = std::chrono::steady_clock::now();
+        const auto VH_out = build_hartree_potential(lattice, fft, rho_out);
+        const auto xc_output = xc.evaluate(rho_out, dV);
         const bool finite_temperature =
             options.occupation_mode == OccupationMode::FermiDirac;
         EnergyTerms energy = compute_total_energy(
@@ -376,6 +479,10 @@ SCFResult run_scf(
             : band_energy - previous_band_energy;
         const double band_energy_change =
             std::abs(signed_band_energy_change);
+        result.performance.output_potential_energy_seconds +=
+            elapsed_seconds(phase_start);
+
+        phase_start = std::chrono::steady_clock::now();
         const double drho = pulay_mix_density(
             pulay,
             rho,
@@ -383,6 +490,7 @@ SCFResult run_scf(
             dV,
             options.nelec
         );
+        result.performance.mixing_seconds += elapsed_seconds(phase_start);
 
         result.iterations = iter + 1;
         result.final_density_residual = drho;
@@ -464,6 +572,8 @@ SCFResult run_scf(
         C_guess = orbitals;
     }
 
+    result.performance.fft =
+        fft.performance.delta_from(fft_performance_start);
     result.wall_time_seconds = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - scf_start
     ).count();

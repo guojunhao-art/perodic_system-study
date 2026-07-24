@@ -2,9 +2,23 @@
 #include "hamiltonian.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+
+namespace {
+
+using PerformanceClock = std::chrono::steady_clock;
+constexpr long long openmp_minimum_work = 32768;
+
+double elapsed_seconds(PerformanceClock::time_point start) {
+    return std::chrono::duration<double>(
+        PerformanceClock::now() - start
+    ).count();
+}
+
+} // namespace
 
 std::vector<double> build_density_from_orbitals(
     const PlaneWaveBasis3D& basis,
@@ -22,6 +36,8 @@ std::vector<double> build_density_from_orbitals(
     }
 
     std::vector<double> rho(fft.grid.ngrid, 0.0);
+    const int nbasis = basis.size();
+    const int ngrid = fft.grid.ngrid;
 
     for (int ib = 0; ib < C.cols(); ++ib) {
         const double occ = occupations[ib];
@@ -30,24 +46,39 @@ std::vector<double> build_density_from_orbitals(
             continue;
         }
 
-        std::vector<std::complex<double>> coeffs(C.rows());
-
-        for (int ig = 0; ig < C.rows(); ++ig) {
-            coeffs[ig] = C(ig, ib);
+        auto stage_start = PerformanceClock::now();
+#pragma omp parallel for schedule(static) \
+    if(fft.thread_count > 1 && ngrid >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
+        for (int p = 0; p < ngrid; ++p) {
+            fft.reciprocal_grid[p] = std::complex<double>(0.0, 0.0);
         }
+#pragma omp parallel for schedule(static) \
+    if(fft.thread_count > 1 && nbasis >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
+        for (int ig = 0; ig < nbasis; ++ig) {
+            const int p =
+                fft.grid.index_from_freq(basis.gvectors[ig].n);
+            fft.reciprocal_grid[p] = C(ig, ib);
+        }
+        fft.performance.density_scatter_seconds +=
+            elapsed_seconds(stage_start);
 
-        scatter_coeffs_to_fft_grid(
-            basis,
-            fft.grid,
-            coeffs,
-            fft.reciprocal_grid
-        );
-
+        stage_start = PerformanceClock::now();
         fftw_execute(fft.backward_plan);
+        fft.performance.density_backward_fft_seconds +=
+            elapsed_seconds(stage_start);
 
-        for (int p = 0; p < fft.grid.ngrid; ++p) {
+        stage_start = PerformanceClock::now();
+#pragma omp parallel for schedule(static) \
+    if(fft.thread_count > 1 && ngrid >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
+        for (int p = 0; p < ngrid; ++p) {
             rho[p] += occ * std::norm(fft.real_grid[p]) / volume;
         }
+        fft.performance.density_accumulation_seconds +=
+            elapsed_seconds(stage_start);
+        fft.performance.density_orbitals += 1;
     }
 
     return rho;
@@ -85,7 +116,11 @@ std::vector<double> build_hartree_potential(
     /*
      * rho(r) -> rho(G)
      */
-    for (int p = 0; p < fft.grid.ngrid; ++p) {
+    const int ngrid = fft.grid.ngrid;
+#pragma omp parallel for schedule(static) \
+    if(fft.thread_count > 1 && ngrid >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
+    for (int p = 0; p < ngrid; ++p) {
         fft.real_grid[p] = std::complex<double>(rho[p], 0.0);
     }
 
@@ -93,23 +128,25 @@ std::vector<double> build_hartree_potential(
 
     std::vector<std::complex<double>> rho_G(fft.grid.ngrid);
 
-    for (int p = 0; p < fft.grid.ngrid; ++p) {
+    const double inverse_grid_size =
+        1.0 / static_cast<double>(ngrid);
+#pragma omp parallel for schedule(static) \
+    if(fft.thread_count > 1 && ngrid >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
+    for (int p = 0; p < ngrid; ++p) {
         rho_G[p] =
-            fft.forward_raw[p] / static_cast<double>(fft.grid.ngrid);
+            fft.forward_raw[p] * inverse_grid_size;
     }
 
     /*
      * VH(G) = 4 pi rho(G) / G^2, G != 0
      * VH(0) = 0
      */
-    std::fill(
-        fft.reciprocal_grid.begin(),
-        fft.reciprocal_grid.end(),
-        std::complex<double>(0.0, 0.0)
-    );
-
     const double tiny = 1.0e-14;
 
+#pragma omp parallel for collapse(3) schedule(static) \
+    if(fft.thread_count > 1 && ngrid >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
     for (int i = 0; i < fft.grid.n1; ++i) {
         for (int j = 0; j < fft.grid.n2; ++j) {
             for (int k = 0; k < fft.grid.n3; ++k) {
@@ -140,7 +177,10 @@ std::vector<double> build_hartree_potential(
 
     std::vector<double> VH(fft.grid.ngrid, 0.0);
 
-    for (int p = 0; p < fft.grid.ngrid; ++p) {
+#pragma omp parallel for schedule(static) \
+    if(fft.thread_count > 1 && ngrid >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
+    for (int p = 0; p < ngrid; ++p) {
         VH[p] = fft.real_grid[p].real();
     }
 

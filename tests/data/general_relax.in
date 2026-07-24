@@ -7,6 +7,7 @@ kpoints = gamma
 
 ecut_ha = 10.0
 fft_grid = auto
+fft_threads = auto
 nelect = auto
 nbands = auto
 occupations = zero_t

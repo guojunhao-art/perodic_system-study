@@ -1,5 +1,6 @@
 #include "hamiltonian.hpp"
 #include "potentials.hpp"
+#include "scf_modules.hpp"
 
 #include <Eigen/Dense>
 
@@ -175,12 +176,116 @@ void test_nonlocal_projector_block_matches_scalar() {
     );
 }
 
+void test_threaded_fftw_matches_serial() {
+#ifdef PWDFT_USE_FFTW_THREADS
+    const double cell = 8.0;
+    const Lattice lattice(
+        Eigen::Vector3d(cell, 0.0, 0.0),
+        Eigen::Vector3d(0.0, cell, 0.0),
+        Eigen::Vector3d(0.0, 0.0, cell)
+    );
+    const FFTGrid grid(32, 32, 32);
+    FFTWorkspace serial_fft(grid, 1);
+    FFTWorkspace threaded_fft(grid, 2);
+    PlaneWaveBasis3D basis;
+    basis.generate(lattice, Eigen::Vector3d::Zero(), 1.8);
+
+    const std::vector<double> potential = make_potential(grid);
+    const std::vector<NonlocalProjector> projectors =
+        make_projectors(basis.size());
+    const Eigen::MatrixXcd states = make_states(basis.size(), 7);
+
+    const Eigen::MatrixXcd serial = apply_hamiltonian_to_block(
+        basis,
+        serial_fft,
+        potential,
+        states,
+        &projectors
+    );
+    const Eigen::MatrixXcd threaded = apply_hamiltonian_to_block(
+        basis,
+        threaded_fft,
+        potential,
+        states,
+        &projectors
+    );
+    require_less(
+        (threaded - serial).cwiseAbs().maxCoeff(),
+        3.0e-12,
+        "two-thread/serial Hpsi error"
+    );
+    const std::vector<double> occupations(
+        static_cast<std::size_t>(states.cols()), 1.0
+    );
+    const std::vector<double> serial_density =
+        build_density_from_orbitals(
+            basis,
+            serial_fft,
+            states,
+            occupations,
+            lattice.volume()
+        );
+    const std::vector<double> threaded_density =
+        build_density_from_orbitals(
+            basis,
+            threaded_fft,
+            states,
+            occupations,
+            lattice.volume()
+        );
+    double density_error = 0.0;
+    for (int p = 0; p < grid.ngrid; ++p) {
+        density_error = std::max(
+            density_error,
+            std::abs(threaded_density[p] - serial_density[p])
+        );
+    }
+    require_less(
+        density_error,
+        3.0e-13,
+        "two-thread/serial density error"
+    );
+    const std::vector<double> serial_hartree =
+        build_hartree_potential(lattice, serial_fft, serial_density);
+    const std::vector<double> threaded_hartree =
+        build_hartree_potential(lattice, threaded_fft, threaded_density);
+    double hartree_error = 0.0;
+    for (int p = 0; p < grid.ngrid; ++p) {
+        hartree_error = std::max(
+            hartree_error,
+            std::abs(threaded_hartree[p] - serial_hartree[p])
+        );
+    }
+    require_less(
+        hartree_error,
+        3.0e-12,
+        "two-thread/serial Hartree error"
+    );
+    if (threaded_fft.thread_count != 2) {
+        throw std::runtime_error(
+            "The requested FFTW thread count was not retained."
+        );
+    }
+    if (threaded_fft.performance.hamiltonian_vectors != states.cols() ||
+        threaded_fft.performance.hamiltonian_block_calls != 1 ||
+        threaded_fft.performance.hamiltonian_backward_fft_seconds <= 0.0 ||
+        threaded_fft.performance.hamiltonian_forward_fft_seconds <= 0.0 ||
+        threaded_fft.performance.density_orbitals != states.cols() ||
+        threaded_fft.performance.density_backward_fft_seconds <= 0.0) {
+        throw std::runtime_error(
+            "Threaded Hpsi performance counters were not populated."
+        );
+    }
+#endif
+}
+
 } // namespace
 
 int main() {
     try {
         test_batched_hamiltonian_matches_scalar();
         test_nonlocal_projector_block_matches_scalar();
+        test_threaded_fftw_matches_serial();
     } catch (const std::exception& error) {
         std::cerr << "Batched-Hamiltonian test failed: "
                   << error.what() << "\n";

@@ -38,6 +38,13 @@ std::vector<Eigen::Vector3d> compute_upf_local_ionic_forces(
     const std::vector<UPFLocalIon>& ions,
     const std::vector<std::complex<double>>& n_G);
 
+std::vector<Eigen::Vector3d> compute_upf_local_ionic_forces(
+    const Lattice& lattice,
+    const UPFLocalReciprocalCache& cache,
+    const std::vector<UPFLocalIon>& ions,
+    const std::vector<std::complex<double>>& n_G,
+    int thread_count = 1);
+
 /* Force obtained by differentiating E_II^smooth. */
 std::vector<Eigen::Vector3d> compute_smooth_ion_ion_forces(
     const Lattice& lattice,
@@ -50,7 +57,8 @@ std::vector<Eigen::Vector3d> compute_nonlocal_ionic_forces(
     const std::vector<NonlocalProjector>& projectors,
     const Eigen::MatrixXcd& C,
     const std::vector<double>& occupations,
-    int nions);
+    int nions,
+    int thread_count = 1);
 
 IonicForceComponents compute_ionic_forces(
     const Lattice& lattice,

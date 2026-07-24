@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <iomanip>
 #include <limits>
@@ -18,6 +19,14 @@
 #include <utility>
 
 namespace {
+
+using PerformanceClock = std::chrono::steady_clock;
+
+double elapsed_seconds(PerformanceClock::time_point start) {
+    return std::chrono::duration<double>(
+        PerformanceClock::now() - start
+    ).count();
+}
 
 bool is_perdew_zunger_lda(const std::string& functional) {
     std::string uppercase = functional;
@@ -104,6 +113,49 @@ double maximum_force_component(
     return maximum;
 }
 
+void print_setup_performance(
+    std::ostream& out,
+    const SetupPerformanceBreakdown& timing) {
+
+    const auto flags = out.flags();
+    const auto precision = out.precision();
+    out << std::fixed << std::setprecision(3)
+        << "  setup wall time = " << timing.total_seconds << " s\n"
+        << "  setup breakdown: UPF/ions = "
+        << timing.upf_and_ions_seconds
+        << "  basis/FFT = " << timing.basis_and_fft_seconds
+        << "  V_NL(projectors) = "
+        << timing.nonlocal_projector_seconds
+        << "  V_loc(cache+FFT) = "
+        << timing.local_potential_seconds
+        << "  Ewald = " << timing.ewald_energy_seconds
+        << " s\n";
+    out.flags(flags);
+    out.precision(precision);
+    out << std::flush;
+}
+
+void print_force_performance(
+    std::ostream& out,
+    const ForcePerformanceBreakdown& timing) {
+
+    const auto flags = out.flags();
+    const auto precision = out.precision();
+    out << std::fixed << std::setprecision(3)
+        << "  post-SCF force wall time = "
+        << timing.total_seconds << " s\n"
+        << "  force breakdown: density FFT = "
+        << timing.density_fft_seconds
+        << "  local = " << timing.local_seconds
+        << "  ion-ion = " << timing.ion_ion_seconds
+        << "  nonlocal = " << timing.nonlocal_seconds
+        << "  MPI reduction = " << timing.mpi_reduction_seconds
+        << " s\n";
+    out.flags(flags);
+    out.precision(precision);
+    out << std::flush;
+}
+
 } // namespace
 
 std::array<int, 3> automatic_fft_grid_dimensions(
@@ -158,6 +210,9 @@ SinglePointResult run_single_point(
         structure.lattice_bohr.col(2)
     );
 
+    SetupPerformanceBreakdown setup_performance;
+    const auto setup_start = PerformanceClock::now();
+    auto phase_start = PerformanceClock::now();
     std::vector<UPFData> upfs;
     upfs.reserve(structure.species_order.size());
     std::map<std::string, int> species_indices;
@@ -279,7 +334,10 @@ SinglePointResult run_single_point(
             );
         }
     }
+    setup_performance.upf_and_ions_seconds =
+        elapsed_seconds(phase_start);
 
+    phase_start = PerformanceClock::now();
     std::vector<KPointHamiltonian> kpoint_hamiltonians;
     kpoint_hamiltonians.reserve(config.kpoints.points.size());
     int minimum_plane_wave_count = 0;
@@ -342,7 +400,9 @@ SinglePointResult run_single_point(
     for (const KPointHamiltonian& point : kpoint_hamiltonians) {
         require_fft_grid_for_basis_products(point.basis, grid);
     }
-    FFTWorkspace fft(grid);
+    FFTWorkspace fft(grid, config.fft_threads);
+    setup_performance.basis_and_fft_seconds =
+        elapsed_seconds(phase_start);
 
     if (log_stream && print_setup) {
         *log_stream
@@ -363,7 +423,8 @@ SinglePointResult run_single_point(
             << "    NSPIN = " << options.nspin
             << "    ENCUT = " << ecut_hartree << " Ha\n"
             << "  FFT grid = "
-            << (automatic_fft_grid ? "automatic" : "explicit") << "\n"
+            << (automatic_fft_grid ? "automatic" : "explicit")
+            << "    FFT threads = " << fft.thread_count << "\n"
             << "  KPOINTS = " << config.kpoints.description
             << "    NKPTS = " << config.kpoints.points.size()
             << "    NPROJ(radial) = " << radial_projector_count << "\n"
@@ -394,12 +455,18 @@ SinglePointResult run_single_point(
         *log_stream << std::flush;
     }
 
-    for (int ik = 0;
-         ik < static_cast<int>(kpoint_hamiltonians.size());
-         ++ik) {
+    const parallel::KPointDistribution distribution(
+        static_cast<int>(kpoint_hamiltonians.size())
+    );
+    phase_start = PerformanceClock::now();
+    for (int ik : distribution.local_kpoints()) {
         KPointHamiltonian& point = kpoint_hamiltonians[ik];
         point.projectors = build_upf_nonlocal_projectors(
-            lattice, point.basis, nonlocal_species, upf_ions
+            lattice,
+            point.basis,
+            nonlocal_species,
+            upf_ions,
+            fft.thread_count
         );
         if (ik == 0) {
             expanded_projector_count = static_cast<int>(
@@ -407,11 +474,28 @@ SinglePointResult run_single_point(
             );
         }
     }
+    setup_performance.nonlocal_projector_seconds =
+        elapsed_seconds(phase_start);
 
+    phase_start = PerformanceClock::now();
+    const UPFLocalReciprocalCache local_reciprocal_cache =
+        build_upf_local_reciprocal_cache(
+            lattice,
+            grid,
+            local_species,
+            fft.thread_count
+        );
     const std::vector<double> local_potential =
         build_upf_local_potential_real(
-            lattice, fft, local_species, upf_ions
+            lattice,
+            fft,
+            local_reciprocal_cache,
+            upf_ions
         );
+    setup_performance.local_potential_seconds =
+        elapsed_seconds(phase_start);
+
+    phase_start = PerformanceClock::now();
     const EwaldEnergyComponents ewald =
         compute_point_ion_ion_ewald_energy(
             lattice,
@@ -419,6 +503,13 @@ SinglePointResult run_single_point(
             ewald_ions,
             config.ewald_width_bohr
         );
+    setup_performance.ewald_energy_seconds =
+        elapsed_seconds(phase_start);
+    setup_performance.total_seconds =
+        elapsed_seconds(setup_start);
+    if (log_stream && parallel::is_root()) {
+        print_setup_performance(*log_stream, setup_performance);
+    }
 
     KPointSCFResult scf = run_kpoint_scf(
         lattice,
@@ -431,22 +522,38 @@ SinglePointResult run_single_point(
         log_stream
     );
 
+    ForcePerformanceBreakdown force_performance;
+    const auto force_start = PerformanceClock::now();
+    phase_start = PerformanceClock::now();
     const auto density_G = build_density_G(fft, scf.density);
+    force_performance.density_fft_seconds =
+        elapsed_seconds(phase_start);
+
     IonicForceComponents forces;
+    phase_start = PerformanceClock::now();
     forces.local = compute_upf_local_ionic_forces(
-        lattice, grid, local_species, upf_ions, density_G
+        lattice,
+        local_reciprocal_cache,
+        upf_ions,
+        density_G,
+        fft.thread_count
     );
+    force_performance.local_seconds =
+        elapsed_seconds(phase_start);
+
+    phase_start = PerformanceClock::now();
     forces.ion_ion = compute_point_ion_ion_ewald_forces(
         lattice,
         grid,
         ewald_ions,
         config.ewald_width_bohr
     );
+    force_performance.ion_ion_seconds =
+        elapsed_seconds(phase_start);
+
+    phase_start = PerformanceClock::now();
     forces.nonlocal.assign(
         structure.atoms.size(), Eigen::Vector3d::Zero()
-    );
-    const parallel::KPointDistribution distribution(
-        static_cast<int>(kpoint_hamiltonians.size())
     );
     std::string local_force_error;
     try {
@@ -471,7 +578,8 @@ SinglePointResult run_single_point(
                         kpoint_hamiltonians[ik].projectors,
                         scf.kpoints[state].orbitals,
                         scf.kpoints[state].occupations,
-                        static_cast<int>(structure.atoms.size())
+                        static_cast<int>(structure.atoms.size()),
+                        fft.thread_count
                     );
                 for (int iatom = 0;
                      iatom < static_cast<int>(structure.atoms.size());
@@ -495,7 +603,10 @@ SinglePointResult run_single_point(
     if (!force_error.empty()) {
         throw std::runtime_error(force_error);
     }
+    force_performance.nonlocal_seconds =
+        elapsed_seconds(phase_start);
 
+    phase_start = PerformanceClock::now();
     std::vector<double> packed_nonlocal_forces(
         3 * structure.atoms.size(), 0.0
     );
@@ -516,6 +627,9 @@ SinglePointResult run_single_point(
                 packed_nonlocal_forces[3 * iatom + direction];
         }
     }
+    force_performance.mpi_reduction_seconds =
+        elapsed_seconds(phase_start);
+
     forces.total.resize(structure.atoms.size(), Eigen::Vector3d::Zero());
     for (int iatom = 0;
          iatom < static_cast<int>(structure.atoms.size());
@@ -524,6 +638,11 @@ SinglePointResult run_single_point(
             forces.local[iatom]
             + forces.ion_ion[iatom]
             + forces.nonlocal[iatom];
+    }
+    force_performance.total_seconds =
+        elapsed_seconds(force_start);
+    if (log_stream && parallel::is_root()) {
+        print_force_performance(*log_stream, force_performance);
     }
 
     SinglePointResult result;
@@ -538,6 +657,8 @@ SinglePointResult run_single_point(
     result.options_used = options;
     result.scf = std::move(scf);
     result.forces = std::move(forces);
+    result.setup_performance = setup_performance;
+    result.force_performance = force_performance;
     return result;
 }
 

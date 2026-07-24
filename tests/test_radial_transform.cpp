@@ -118,6 +118,7 @@ void test_s_gaussian_transform() {
 
     double max_error = 0.0;
     double max_upf_form_error = 0.0;
+    double max_unchecked_error = 0.0;
     for (double g : std::vector<double>{0.0, 0.2, 1.0, 3.0, 6.0}) {
         const double expected = gaussian_transform_3d(alpha, g);
         const double transformed = radial_fourier_bessel_transform(
@@ -132,6 +133,22 @@ void test_s_gaussian_transform() {
             max_upf_form_error,
             std::abs(transformed_upf_form - expected)
         );
+        max_unchecked_error = std::max(
+            max_unchecked_error,
+            std::abs(
+                radial_fourier_bessel_transform_unchecked(
+                    0, g, grid.r, grid.weights, gaussian
+                ) - transformed
+            )
+        );
+        max_unchecked_error = std::max(
+            max_unchecked_error,
+            std::abs(
+                radial_fourier_bessel_transform_from_r_times_function_unchecked(
+                    0, g, grid.r, grid.weights, r_times_gaussian
+                ) - transformed_upf_form
+            )
+        );
     }
 
     require_less(max_error, 2.0e-11, "s-Gaussian transform error");
@@ -139,6 +156,11 @@ void test_s_gaussian_transform() {
         max_upf_form_error,
         2.0e-11,
         "UPF r-times-function transform error"
+    );
+    require_less(
+        max_unchecked_error,
+        1.0e-15,
+        "validated/unchecked transform mismatch"
     );
 }
 

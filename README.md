@@ -82,6 +82,71 @@ k 点采用循环分配：rank $r$ 处理 $r,r+N_{\mathrm{rank}},\ldots$。每�
 非局域力也先局部计算再求和。有效进程数不超过 k 点数；Gamma-only 计算不会从
 这一层并行中获得加速。未启用 MPI 时，同一套代码自动退化为原来的单进程路径。
 
+单个 k 点内部可通过 threaded FFTW 和 OpenMP 并行。输入中省略 `fft_threads`
+时保留单线程默认；写成
+
+```text
+fft_threads = auto
+```
+
+会读取 OpenMP 可用线程数，因而可以用 `OMP_NUM_THREADS` 控制：
+
+```bash
+OMP_NUM_THREADS=8 ./pwdft examples/o2_triplet_scf.in
+```
+
+也可以直接写 `fft_threads = 8`。该线程数同时用于 FFTW plan、Eigen 的线程上限、
+平面波 scatter/gather、实空间势乘法、密度累加和 Hartree 网格循环。MPI 构建中每个
+rank 各自使用该线程数，因此混合并行时应按每个 rank 分配的 CPU 核数设置
+`OMP_NUM_THREADS`，避免过度订阅。CMake 可用
+`PWDFT_ENABLE_FFTW_THREADS=OFF` 或 `PWDFT_ENABLE_OPENMP=OFF` 分别关闭两层线程
+支持。
+
+Davidson 的长复矩阵乘法可选择交给外部 BLAS。默认仍使用 Eigen 自带内核；例如
+使用系统 OpenBLAS：
+
+```bash
+cmake -S . -B build-blas \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPWDFT_ENABLE_BLAS=ON \
+  -DPWDFT_BLAS_VENDOR=OpenBLAS
+```
+
+若 Intel MKL 与 Intel MPI 安装在同一套 oneAPI 环境中，不需要执行会同时修改
+MPI 环境的 `setvars.sh`。可以只把 MKL 根目录交给本项目：
+
+```bash
+cmake -S . -B build-mkl \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPWDFT_ENABLE_BLAS=ON \
+  -DPWDFT_BLAS_ROOT=/opt/intel/oneapi/mkl/latest
+```
+
+也可以精确指定单个 BLAS runtime；该选项优先级最高：
+
+```bash
+cmake -S . -B build-mkl \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPWDFT_ENABLE_BLAS=ON \
+  -DPWDFT_BLAS_LIBRARY=/opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_rt.so
+```
+
+这两个路径选项只用于定位 BLAS，不会写入 `CMAKE_PREFIX_PATH`，也不会改变
+`MPI_CXX_COMPILER`。因此 MPI 构建仍可显式使用原来的编译器，例如
+`-DMPI_CXX_COMPILER=/usr/bin/mpicxx`。GCC OpenMP 与 MKL runtime 混用时建议运行
+前设置：
+
+```bash
+export OMP_NUM_THREADS=10
+export MKL_NUM_THREADS=10
+export MKL_DYNAMIC=FALSE
+export MKL_THREADING_LAYER=GNU
+```
+
+若使用 OpenBLAS，则以 `OPENBLAS_NUM_THREADS=10` 控制 BLAS 线程。外部 BLAS
+只接管 Eigen 支持的动态稠密乘法；矩阵对象、小型本征值求解和其余 C++ 接口仍由
+Eigen 管理。
+
 ### 1.1 下载并检查 NC-UPF
 
 第一阶段建议使用 Quantum ESPRESSO 官方库中的两个文件：
@@ -138,6 +203,7 @@ pseudo = Si pseudopotentials/Si.pz-vbc.UPF
 pseudo = H  pseudopotentials/H.pz-vbc.UPF
 ecut_ha = 10.0
 fft_grid = auto
+fft_threads = auto
 kpoints = gamma
 ```
 
@@ -359,15 +425,28 @@ $$
 H_{\mathrm{sub}}=V^\dagger W,
 $$
 
-但不再在每次 Davidson 迭代中对旧的 $V$ 重复计算 $HV$。厚重启时使用 Ritz 对
+但不再在每次 Davidson 迭代中对旧的 $V$ 重复计算 $HV$。代码还缓存
+$H_{\mathrm{sub}}$：初始子空间完整构造一次，扩展后只新增
+$V_{\mathrm{old}}^\dagger HT$ 与 $T^\dagger HT$，另一半由 Hermitian 对称性填充。
+厚重启时使用 Ritz 对
 
 $$
 X=VA,\qquad HX=WA,
 $$
 
-所以重启本身也不需要额外的 $H\psi$。代码会先把修正向量对 $V$ 和同批修正方向
-做两遍正交化；如果没有留下新的线性无关方向，就从 $(X,HX)$ 重启，而不是在同一个
-子空间里无限循环。
+所以重启本身也不需要额外的 $H\psi$。$V$ 和 $W$ 在每次 Davidson 求解开始时按
+`max_subspace` 一次性分配，后续扩展与厚重启只更新有效列，不再重新分配并复制
+整个长矩阵。修正方向组成块 $T$，先以块矩阵乘法执行
+
+$$
+T\leftarrow T-V(V^\dagger T),
+$$
+
+再由小 Gram 矩阵 $T^\dagger T$ 做对称正交化并删除线性相关方向。第二遍投影采用
+DGKS 判据：仅当第一遍后至少一个方向的范数下降到原来的 50% 以下时执行。这样
+保留困难修正方向的两遍稳定性，并让已经近似正交的块少做两次长矩阵乘法。如果
+没有留下新的线性无关方向，代码就从 $(X,HX)$ 重启，而不是在同一个子空间里无限
+循环。
 
 默认 SCF 行采用 VASP 风格：
 
@@ -385,7 +464,70 @@ $\sum_{\sigma\mathbf kn}w_{\mathbf k}f_{\sigma n\mathbf k}
 Davidson 精度，但不参与外层收敛判断。只有 `|dE|` 和 `|d eps|` 同时小于
 `energy_tolerance_ha` 才满足外层判据。末尾还会给出累计
 `N_Hpsi`、`N_Hblock`、Davidson 迭代/重启数、`Hpsi_time`、子空间对角化时间和
-SCF 总时间。平均 block 宽度可由 `N_Hpsi/N_Hblock` 估计。
+SCF 总时间。平均 block 宽度可由 `N_Hpsi/N_Hblock` 估计。性能汇总进一步拆分为
+
+- SCF 阶段墙钟时间：输入势、本征求解、占据、密度/动能、输出势/能量和混合；
+- $H\psi$：scatter、反向/正向 FFT、$V(\mathbf r)\psi$、gather+动能和非局域势；
+- 密度构造：有效轨道数、scatter、反向 FFT 和实空间累加。
+
+其中 `subspace_time` 只统计小矩阵对角化；`ortho/Ritz/other` 是 Davidson 总时间
+扣除 $H\psi$ 和小矩阵对角化后的余量。后续两行会进一步报告：
+
+- `initial_ortho`：初始试探子空间的两遍 Gram--Schmidt；
+- `VtW`：构造并数值 Hermitian 化 $H_{\mathrm{sub}}=V^\dagger W$；
+- `Ritz(X/HX)`：两次长矩阵旋转 $X=VA$ 和 $HX=WA$；
+- `residual+prec`：残差构造、范数计算和 Davidson 对角预处理；
+- `result_copy`：把本轮本征值、Ritz 轨道和残差复制到返回结果；
+- `correction_ortho`：修正块对旧子空间的两遍块投影以及基于
+  $T^\dagger T$ 的对称正交化；
+- `restart`：厚重启时用 $(X,HX)$ 替换 $(V,W)$；
+- `assemble(T)`：保留的兼容计时项；修正方向现已直接构造为块，因此应接近零；
+- `expand/copy`：把新 $(T,HT)$ 写入预分配的 $(V,W)$ 有效列；
+- `unaccounted`：原 `ortho/Ritz/other` 扣除上述细项后的剩余时间。
+
+`Davidson reuse` 还会输出 `VtW full/incremental/Ritz` 和
+`correction reorth/blocks`。前者用于确认完整 $V^\dagger W$ 只在每次 Davidson
+求解开始时构造一次，后续走增量更新或厚重启复用；后者给出 DGKS 实际触发第二遍
+投影的块数。
+
+`unaccounted` 可用于发现尚未单独包住的对象构造、结果复制或日志开销。
+MPI 输出中的 SCF 阶段取最慢 rank，$H\psi$ 与密度内部计时则为 rank 求和；单 rank
+计算时二者都是普通墙钟时间。
+
+SCF 外的赝势和受力装配也会输出独立墙钟计时：
+
+```text
+setup wall time = ... s
+setup breakdown: UPF/ions = ...  basis/FFT = ...
+                 V_NL(projectors) = ...  V_loc(cache+FFT) = ...  Ewald = ... s
+post-SCF force wall time = ... s
+force breakdown: density FFT = ...  local = ...  ion-ion = ...
+                 nonlocal = ...  MPI reduction = ... s
+```
+
+局域 NC-UPF 径向变换
+
+$$
+V_s(G)=4\pi\int r^2j_0(Gr)\Delta V_s(r)\,dr+V_{s,\mathrm{Coul}}(G)
+$$
+
+现在先按精确相同的 $G^2$ 分组，只对“元素种类 × 不同径向模长”计算一次，再展开
+成与 $\mathbf G$ 对齐的缓存表。局域势装配只增加离子平移相位，SCF 后的局域
+Hellmann--Feynman 力直接复用同一张表，不再重新进行 Fourier--Bessel 积分。
+
+非局域 projector 同样按精确 $q^2$ 复用径向变换；实球谐函数和 $D_{ij}$ 对角化
+结果先按元素和 $k$ 点基组构造成无平移模板；同种元素的不同原子只需乘
+$\exp[-i(\mathbf G+\mathbf k)\cdot\mathbf R_I]$。MPI 计算仅在拥有该 $k$ 点的
+rank 上装配对应 projector。非局域力将所有 projector 排成矩阵 $B$，以
+
+$$
+O=B^\dagger C,\qquad
+\partial_aO=B^\dagger[iq_aC]
+$$
+
+的四次块矩阵乘法代替逐 projector、逐能带和逐方向分配长临时向量；启用外部
+BLAS 时这些乘法由 `zgemm` 执行。
+
 `h2_opt` 的每个几何点也会显示 `N_Hpsi`、`N_Hblock`、$H\psi$ 耗时与 SCF 耗时。
 可以用下面三组输入建立串行基线：
 
@@ -450,9 +592,11 @@ make test_batched_hamiltonian
 ./test_batched_hamiltonian
 ```
 
-完成这一层串行批处理后，再根据 10/15/20 Ha 的 `Hpsi_time` 和平均 block 宽度选择
-FFTW threads 或外层 OpenMP。Rayleigh--Ritz 只有在 `subspace_time` 占比显著上升后才
-值得优先接入并行线性代数。
+批量 plan 使用与标量 plan 相同的 `fft_threads`。FFT 前后的连续网格操作由 OpenMP
+处理；FFT 本身由 `libfftw3_threads` 处理。`test_batched_hamiltonian` 还比较一线程
+和两线程的 $H\psi$、密度与 Hartree 势，并检查计时计数器。实际任务应根据新的分阶段输出做
+1/2/4/8/16 线程强标度测试；Rayleigh--Ritz/正交化只有在 `eigensolver` 与
+`Hpsi_time` 的差额明显上升后才值得优先接入并行线性代数。
 
 ## 2. 单位和 Fourier 约定
 
@@ -682,6 +826,27 @@ $$
 ```bash
 ./pwdft examples/h_atom_spin_scf.in
 ```
+
+也可用 O₂ 示例检查非受限 SCF 能否从非整数初猜磁矩回到三重态：
+
+```bash
+OMP_NUM_THREADS=8 ./pwdft examples/o2_triplet_scf.in
+```
+
+在 12 Å 立方盒、$r_{\mathrm{OO}}=1.21$ Å、`ecut_ha = 30` 的一次参考计算中，
+$M_0=1\ \mu_B$ 最终得到
+
+$$
+N_\uparrow/N_\downarrow=5/7,\qquad M=-2\ \mu_B,
+$$
+
+以及 $E=-31.73006235859$ Ha、轴向力
+$F_z=\mp0.04904463$ Ha/Bohr。这里 $M=-2\ \mu_B$ 与
+$M=+2\ \mu_B$ 通过全局自旋翻转相连；无外磁场时二者物理等价，也说明
+`starting_magnetization` 只是初猜而不是约束。该结果目前是程序内参考值，仍需
+使用相同赝势、截断能、超胞和 FFT 网格与 Quantum ESPRESSO 交叉验证。
+该示例采用 `mixing_alpha = 0.30` 作为后续性能基线；`0.10` 的测试出现明显能量
+振荡并需要 141 轮 SCF，因此比较代码优化前后性能时应保持 `0.30` 不变。
 
 其中 $\sigma=k_BT$。令 $p_n=f_n/2$，无量纲电子熵是
 

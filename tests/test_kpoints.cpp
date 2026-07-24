@@ -417,12 +417,30 @@ void test_two_kpoint_scf() {
     if (result.kpoints.size() != 2) {
         throw std::runtime_error("SCF did not preserve both k-point states.");
     }
+    if (result.performance.fft.hamiltonian_vectors !=
+            result.eigensolver_hamiltonian_applications ||
+        result.performance.fft.hamiltonian_block_calls !=
+            result.eigensolver_hamiltonian_block_calls ||
+        result.performance.fft.hamiltonian_backward_fft_seconds <= 0.0 ||
+        result.performance.fft.density_orbitals <= 0 ||
+        result.eigensolver_detail.detailed_other_seconds() <= 0.0 ||
+        result.eigensolver_detail.detailed_other_seconds() >
+            result.eigensolver_other_seconds + 1.0e-9) {
+        throw std::runtime_error(
+            "SCF performance counters are incomplete or inconsistent."
+        );
+    }
     if (parallel::is_root()) {
         const std::string output = log.str();
         if (output.find("d eps") == std::string::npos ||
             output.find("ncg") == std::string::npos ||
             output.find("rms(c)") == std::string::npos ||
-            output.find("DAV:") == std::string::npos) {
+            output.find("DAV:") == std::string::npos ||
+            output.find("Hpsi breakdown") == std::string::npos ||
+            output.find("ortho/Ritz/other") == std::string::npos ||
+            output.find("Davidson breakdown") == std::string::npos ||
+            output.find("Davidson reuse") == std::string::npos ||
+            output.find("unaccounted") == std::string::npos) {
             throw std::runtime_error(
                 "VASP-style DAV diagnostics are incomplete."
             );

@@ -176,8 +176,29 @@ void test_periodic_coefficients_and_local_force() {
         {0, Eigen::Vector3d(0.66, 0.58, 0.72)}
     };
 
+    const UPFLocalReciprocalCache cache =
+        build_upf_local_reciprocal_cache(
+            lattice,
+            grid,
+            species,
+            2
+        );
     const auto potential_G =
         build_upf_local_potential_G(lattice, grid, species, ions);
+    const auto cached_potential_G =
+        build_upf_local_potential_G(lattice, cache, ions, 2);
+    double maximum_cache_error = 0.0;
+    for (int p = 0; p < grid.ngrid; ++p) {
+        maximum_cache_error = std::max(
+            maximum_cache_error,
+            std::abs(cached_potential_G[p] - potential_G[p])
+        );
+    }
+    require_less(
+        maximum_cache_error,
+        2.0e-13,
+        "cached local-potential coefficient error"
+    );
     const int zero_index = grid.index_from_freq(Eigen::Vector3i::Zero());
     const double expected_G0 =
         static_cast<double>(ions.size())
@@ -265,6 +286,18 @@ void test_periodic_coefficients_and_local_force() {
         species,
         ions,
         density_G
+    );
+    const auto cached_force = compute_upf_local_ionic_forces(
+        lattice,
+        cache,
+        ions,
+        density_G,
+        2
+    );
+    require_less(
+        (cached_force[0] - analytic_force[0]).cwiseAbs().maxCoeff(),
+        2.0e-13,
+        "cached local-force error"
     );
     const double h = 1.0e-5;
     Eigen::Vector3d finite_difference = Eigen::Vector3d::Zero();

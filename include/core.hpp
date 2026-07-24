@@ -183,6 +183,25 @@ public:
     }
 };
 
+struct FFTPerformanceCounters {
+    long long hamiltonian_vectors = 0;
+    long long hamiltonian_block_calls = 0;
+    double hamiltonian_scatter_seconds = 0.0;
+    double hamiltonian_backward_fft_seconds = 0.0;
+    double hamiltonian_local_multiply_seconds = 0.0;
+    double hamiltonian_forward_fft_seconds = 0.0;
+    double hamiltonian_gather_kinetic_seconds = 0.0;
+    double hamiltonian_nonlocal_seconds = 0.0;
+
+    long long density_orbitals = 0;
+    double density_scatter_seconds = 0.0;
+    double density_backward_fft_seconds = 0.0;
+    double density_accumulation_seconds = 0.0;
+
+    FFTPerformanceCounters delta_from(
+        const FFTPerformanceCounters& earlier) const;
+};
+
 class FFTWorkspace {
 public:
     struct BatchPlans {
@@ -210,136 +229,22 @@ public:
     int batch_capacity = 0;
     std::map<int, BatchPlans> batch_plan_cache;
 
-    explicit FFTWorkspace(const FFTGrid& grid_in)
-        : grid(grid_in),
-          reciprocal_grid(grid.ngrid, {0.0, 0.0}),
-          real_grid(grid.ngrid, {0.0, 0.0}),
-          forward_raw(grid.ngrid, {0.0, 0.0}) {
+    int thread_count = 1;
+    FFTPerformanceCounters performance;
 
-        backward_plan = fftw_plan_dft_3d(
-            grid.n1, grid.n2, grid.n3,
-            reinterpret_cast<fftw_complex*>(reciprocal_grid.data()),
-            reinterpret_cast<fftw_complex*>(real_grid.data()),
-            FFTW_BACKWARD,
-            FFTW_ESTIMATE
-        );
+    explicit FFTWorkspace(
+        const FFTGrid& grid_in,
+        int requested_thread_count = 1);
 
-        forward_plan = fftw_plan_dft_3d(
-            grid.n1, grid.n2, grid.n3,
-            reinterpret_cast<fftw_complex*>(real_grid.data()),
-            reinterpret_cast<fftw_complex*>(forward_raw.data()),
-            FFTW_FORWARD,
-            FFTW_ESTIMATE
-        );
-
-        if (!backward_plan || !forward_plan) {
-            throw std::runtime_error("Failed to create FFTW plans.");
-        }
-    }
-
-    ~FFTWorkspace() {
-        destroy_batch_plans();
-        if (backward_plan) {
-            fftw_destroy_plan(backward_plan);
-        }
-        if (forward_plan) {
-            fftw_destroy_plan(forward_plan);
-        }
-    }
+    ~FFTWorkspace();
 
     FFTWorkspace(const FFTWorkspace&) = delete;
     FFTWorkspace& operator=(const FFTWorkspace&) = delete;
 
-    const BatchPlans& ensure_batch_plans(int transform_count) {
-        if (transform_count <= 0) {
-            throw std::runtime_error(
-                "Batched FFT transform count must be positive."
-            );
-        }
-
-        if (transform_count > batch_capacity) {
-            destroy_batch_plans();
-            batch_capacity = transform_count;
-            const std::size_t buffer_size =
-                static_cast<std::size_t>(batch_capacity)
-                * static_cast<std::size_t>(grid.ngrid);
-            batch_reciprocal_grid.assign(
-                buffer_size,
-                std::complex<double>(0.0, 0.0)
-            );
-            batch_real_grid.assign(
-                buffer_size,
-                std::complex<double>(0.0, 0.0)
-            );
-        }
-
-        const auto found = batch_plan_cache.find(transform_count);
-        if (found != batch_plan_cache.end()) {
-            return found->second;
-        }
-
-        int dimensions[3] = {grid.n1, grid.n2, grid.n3};
-        BatchPlans plans;
-        plans.backward = fftw_plan_many_dft(
-            3,
-            dimensions,
-            transform_count,
-            reinterpret_cast<fftw_complex*>(batch_reciprocal_grid.data()),
-            nullptr,
-            1,
-            grid.ngrid,
-            reinterpret_cast<fftw_complex*>(batch_real_grid.data()),
-            nullptr,
-            1,
-            grid.ngrid,
-            FFTW_BACKWARD,
-            FFTW_ESTIMATE
-        );
-        plans.forward = fftw_plan_many_dft(
-            3,
-            dimensions,
-            transform_count,
-            reinterpret_cast<fftw_complex*>(batch_real_grid.data()),
-            nullptr,
-            1,
-            grid.ngrid,
-            reinterpret_cast<fftw_complex*>(batch_reciprocal_grid.data()),
-            nullptr,
-            1,
-            grid.ngrid,
-            FFTW_FORWARD,
-            FFTW_ESTIMATE
-        );
-
-        if (!plans.backward || !plans.forward) {
-            if (plans.backward) {
-                fftw_destroy_plan(plans.backward);
-            }
-            if (plans.forward) {
-                fftw_destroy_plan(plans.forward);
-            }
-            throw std::runtime_error("Failed to create batched FFTW plans.");
-        }
-
-        const auto inserted = batch_plan_cache.emplace(
-            transform_count,
-            plans
-        );
-        return inserted.first->second;
-    }
+    const BatchPlans& ensure_batch_plans(int transform_count);
 
 private:
-    void destroy_batch_plans() {
-        for (auto& entry : batch_plan_cache) {
-            if (entry.second.backward) {
-                fftw_destroy_plan(entry.second.backward);
-            }
-            if (entry.second.forward) {
-                fftw_destroy_plan(entry.second.forward);
-            }
-        }
-        batch_plan_cache.clear();
-    }
+    void destroy_batch_plans();
 };
 
 struct NonlocalProjector {

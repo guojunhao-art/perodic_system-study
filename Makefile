@@ -3,6 +3,9 @@ CXXFLAGS ?= -O2 -std=c++17
 CPPFLAGS ?= -Iinclude -I/usr/include/eigen3
 LDFLAGS ?=
 LDLIBS ?= -lfftw3 -lm
+THREAD_CPPFLAGS ?= -DPWDFT_USE_FFTW_THREADS=1
+THREAD_CXXFLAGS ?= -fopenmp
+THREAD_LDLIBS ?= -lfftw3_threads
 LIBXC_CFLAGS ?= $(shell pkg-config --cflags libxc 2>/dev/null)
 LIBXC_LIBS ?= $(shell pkg-config --libs libxc 2>/dev/null)
 MPI_CXX ?= mpicxx
@@ -12,43 +15,44 @@ ifeq ($(strip $(LIBXC_LIBS)),)
 LIBXC_LIBS = -lxc
 endif
 
-CORE_CPPFLAGS = $(CPPFLAGS) $(LIBXC_CFLAGS)
-CORE_LDLIBS = $(LDLIBS) $(LIBXC_LIBS)
+CORE_CPPFLAGS = $(CPPFLAGS) $(LIBXC_CFLAGS) $(THREAD_CPPFLAGS)
+CORE_CXXFLAGS = $(CXXFLAGS) $(THREAD_CXXFLAGS)
+CORE_LDLIBS = $(THREAD_LDLIBS) $(LDLIBS) $(LIBXC_LIBS) -lpthread
 
 CORE_SRC = $(wildcard src/*.cpp)
 
 pwdft: $(CORE_SRC) app/main.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 pwdft_mpi: $(CORE_SRC) app/main.cpp
-	$(MPI_CXX) $(CORE_CPPFLAGS) -DPWDFT_USE_MPI=1 $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(MPI_CXX) $(CORE_CPPFLAGS) -DPWDFT_USE_MPI=1 $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test_forces: $(CORE_SRC) tests/test_forces.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test_scf_force_fd: $(CORE_SRC) tests/test_scf_force_fd.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test_xc_functional: $(CORE_SRC) tests/test_xc_functional.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test_upf_local_potential: $(CORE_SRC) tests/test_upf_local_potential.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test_upf_nonlocal: $(CORE_SRC) tests/test_upf_nonlocal.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) -DTEST_DATA_DIR=\"tests/data\" $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) -DTEST_DATA_DIR=\"tests/data\" $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test_ewald: $(CORE_SRC) tests/test_ewald.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test_davidson: $(CORE_SRC) tests/test_davidson.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test_batched_hamiltonian: $(CORE_SRC) tests/test_batched_hamiltonian.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test_relaxation: $(CORE_SRC) tests/test_relaxation.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test_radial_transform: src/radial_transform.cpp tests/test_radial_transform.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@
@@ -60,10 +64,10 @@ test_input: src/input.cpp tests/test_input.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -DTEST_DATA_DIR=\"tests/data\" $^ -o $@
 
 test_kpoints: $(CORE_SRC) tests/test_kpoints.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test_kpoints_mpi: $(CORE_SRC) tests/test_kpoints.cpp
-	$(MPI_CXX) $(CORE_CPPFLAGS) -DPWDFT_USE_MPI=1 $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(MPI_CXX) $(CORE_CPPFLAGS) -DPWDFT_USE_MPI=1 $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test-mpi: test_kpoints_mpi
 	$(MPIEXEC) -n 2 ./test_kpoints_mpi
@@ -72,10 +76,10 @@ upf_info: src/upf_reader.cpp src/radial_transform.cpp src/upf_local_potential.cp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(LDLIBS)
 
 h2_opt: $(CORE_SRC) app/h2_opt.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 si2_force_check: $(CORE_SRC) app/si2_force_check.cpp
-	$(CXX) $(CORE_CPPFLAGS) $(CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
 test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_kpoints test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation
 	./test_forces

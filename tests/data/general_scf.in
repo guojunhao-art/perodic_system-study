@@ -7,6 +7,7 @@ kpoints = gamma
 
 ecut_ha = 10.0
 fft_grid = 24 26 28
+fft_threads = 3
 ewald_width_bohr = 0.75
 nelect = auto
 nbands = 9

@@ -79,6 +79,8 @@ struct CalculationConfig {
 
     double ecut_hartree = 0.0;
     std::array<int, 3> fft_grid{{0, 0, 0}};
+    /* 0 means auto; the omitted-key default remains one thread. */
+    int fft_threads = 1;
     double ewald_width_bohr = 0.70;
 
     bool nelect_auto = true;

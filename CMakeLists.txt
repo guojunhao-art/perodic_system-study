@@ -5,6 +5,28 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(PWDFT_ENABLE_MPI "Enable process-level k-point MPI parallelism" OFF)
+option(PWDFT_ENABLE_FFTW_THREADS "Enable threaded FFTW plans" ON)
+option(PWDFT_ENABLE_OPENMP "Enable OpenMP real/reciprocal-grid loops" ON)
+option(
+    PWDFT_ENABLE_BLAS
+    "Use an external BLAS backend for Eigen matrix products"
+    OFF
+)
+set(
+    PWDFT_BLAS_ROOT ""
+    CACHE PATH
+    "Optional BLAS/MKL root; searched without changing global CMake paths"
+)
+set(
+    PWDFT_BLAS_LIBRARY ""
+    CACHE FILEPATH
+    "Optional full path to one BLAS runtime library (for example libmkl_rt.so)"
+)
+set(
+    PWDFT_BLAS_VENDOR ""
+    CACHE STRING
+    "Optional FindBLAS BLA_VENDOR value when no explicit BLAS path is given"
+)
 
 find_package(Eigen3 QUIET)
 find_package(PkgConfig QUIET)
@@ -31,6 +53,7 @@ endif()
 
 add_library(pw_dft_core
     src/calculation.cpp
+    src/fft_workspace.cpp
     src/relaxation.cpp
     src/hamiltonian.cpp
     src/input.cpp
@@ -59,7 +82,124 @@ else()
     target_include_directories(pw_dft_core PUBLIC /usr/include/eigen3)
 endif()
 
-target_link_libraries(pw_dft_core PUBLIC fftw3 m)
+target_link_libraries(pw_dft_core PUBLIC m)
+
+if (PWDFT_ENABLE_BLAS)
+    set(_pwdft_blas_description "")
+    find_package(Threads REQUIRED)
+    target_link_libraries(
+        pw_dft_core PUBLIC Threads::Threads ${CMAKE_DL_LIBS}
+    )
+
+    if (PWDFT_BLAS_LIBRARY)
+        if (NOT IS_ABSOLUTE "${PWDFT_BLAS_LIBRARY}")
+            message(FATAL_ERROR
+                "PWDFT_BLAS_LIBRARY must be an absolute library path."
+            )
+        endif()
+        if (NOT EXISTS "${PWDFT_BLAS_LIBRARY}")
+            message(FATAL_ERROR
+                "PWDFT_BLAS_LIBRARY does not exist: "
+                "${PWDFT_BLAS_LIBRARY}"
+            )
+        endif()
+        add_library(PWDFT::BLAS UNKNOWN IMPORTED)
+        set_target_properties(PWDFT::BLAS PROPERTIES
+            IMPORTED_LOCATION "${PWDFT_BLAS_LIBRARY}"
+        )
+        target_link_libraries(pw_dft_core PUBLIC PWDFT::BLAS)
+        set(_pwdft_blas_description "${PWDFT_BLAS_LIBRARY}")
+    elseif (PWDFT_BLAS_ROOT)
+        if (NOT IS_DIRECTORY "${PWDFT_BLAS_ROOT}")
+            message(FATAL_ERROR
+                "PWDFT_BLAS_ROOT is not a directory: "
+                "${PWDFT_BLAS_ROOT}"
+            )
+        endif()
+
+        # Keep this root out of CMAKE_PREFIX_PATH. In particular, an Intel
+        # oneAPI root may also expose Intel MPI, which must not affect the
+        # independently selected MPI compiler.
+        unset(_PWDFT_BLAS_LIBRARY_FROM_ROOT CACHE)
+        find_library(
+            _PWDFT_BLAS_LIBRARY_FROM_ROOT
+            NAMES mkl_rt openblas blas
+            HINTS "${PWDFT_BLAS_ROOT}"
+            PATH_SUFFIXES
+                lib/intel64
+                lib64
+                lib
+                "lib/${CMAKE_LIBRARY_ARCHITECTURE}"
+                "lib/${CMAKE_LIBRARY_ARCHITECTURE}/openblas-pthread"
+            NO_DEFAULT_PATH
+        )
+        if (NOT _PWDFT_BLAS_LIBRARY_FROM_ROOT)
+            message(FATAL_ERROR
+                "No mkl_rt, openblas, or blas library was found below "
+                "PWDFT_BLAS_ROOT=${PWDFT_BLAS_ROOT}. Set "
+                "PWDFT_BLAS_LIBRARY to the full library path instead."
+            )
+        endif()
+        add_library(PWDFT::BLAS UNKNOWN IMPORTED)
+        set_target_properties(PWDFT::BLAS PROPERTIES
+            IMPORTED_LOCATION "${_PWDFT_BLAS_LIBRARY_FROM_ROOT}"
+        )
+        target_link_libraries(pw_dft_core PUBLIC PWDFT::BLAS)
+        set(
+            _pwdft_blas_description
+            "${_PWDFT_BLAS_LIBRARY_FROM_ROOT}"
+        )
+    else()
+        if (PWDFT_BLAS_VENDOR)
+            set(BLA_VENDOR "${PWDFT_BLAS_VENDOR}")
+        endif()
+        find_package(BLAS REQUIRED)
+        target_link_libraries(pw_dft_core PUBLIC ${BLAS_LIBRARIES})
+        if (BLAS_LINKER_FLAGS)
+            target_link_options(
+                pw_dft_core PUBLIC ${BLAS_LINKER_FLAGS}
+            )
+        endif()
+        set(_pwdft_blas_description "${BLAS_LIBRARIES}")
+    endif()
+
+    # Eigen retains matrix ownership and high-level expressions while
+    # supported dynamic dense products are routed through BLAS (zgemm here).
+    target_compile_definitions(pw_dft_core PUBLIC EIGEN_USE_BLAS=1)
+    message(STATUS "PWDFT external BLAS backend: ${_pwdft_blas_description}")
+endif()
+
+if (PWDFT_ENABLE_FFTW_THREADS)
+    find_package(Threads REQUIRED)
+    find_library(FFTW3_THREADS_LIBRARY NAMES fftw3_threads)
+    if (NOT FFTW3_THREADS_LIBRARY)
+        message(FATAL_ERROR
+            "Threaded FFTW was requested, but libfftw3_threads was not found."
+        )
+    endif()
+    target_compile_definitions(
+        pw_dft_core PUBLIC PWDFT_USE_FFTW_THREADS=1
+    )
+    target_link_libraries(
+        pw_dft_core PUBLIC
+        ${FFTW3_THREADS_LIBRARY}
+        fftw3
+        Threads::Threads
+    )
+else()
+    target_link_libraries(pw_dft_core PUBLIC fftw3)
+endif()
+
+if (PWDFT_ENABLE_OPENMP)
+    find_package(OpenMP QUIET COMPONENTS CXX)
+    if (OpenMP_CXX_FOUND)
+        target_link_libraries(pw_dft_core PUBLIC OpenMP::OpenMP_CXX)
+    else()
+        message(WARNING
+            "OpenMP was requested but not found; grid loops remain serial."
+        )
+    endif()
+endif()
 
 if (PWDFT_ENABLE_MPI)
     find_package(MPI REQUIRED COMPONENTS CXX)

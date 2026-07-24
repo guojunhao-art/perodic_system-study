@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <map>
 #include <stdexcept>
 #include <vector>
@@ -14,6 +15,17 @@
 namespace {
 
 constexpr double zero_tolerance = 1.0e-14;
+constexpr long long openmp_minimum_work = 32768;
+
+struct SpeciesProjectorTemplate {
+    Eigen::VectorXcd beta_G;
+    double D = 0.0;
+};
+
+struct ReciprocalRadiusClasses {
+    std::vector<double> radii;
+    std::vector<int> basis_to_radius;
+};
 
 std::complex<double> translation_phase(
     const Eigen::Vector3d& G,
@@ -134,6 +146,163 @@ std::map<int, std::vector<int>> group_projectors_by_l(
         groups[species.radial_projectors[ip].angular_momentum].push_back(ip);
     }
     return groups;
+}
+
+ReciprocalRadiusClasses make_radius_classes(
+    const PlaneWaveBasis3D& basis) {
+
+    ReciprocalRadiusClasses classes;
+    classes.basis_to_radius.resize(basis.size(), 0);
+    std::map<double, int> exact_classes;
+    for (int ig = 0; ig < basis.size(); ++ig) {
+        const double q2 = basis.gvectors[ig].q_cart.squaredNorm();
+        const auto inserted = exact_classes.emplace(
+            q2,
+            static_cast<int>(classes.radii.size())
+        );
+        if (inserted.second) {
+            classes.radii.push_back(std::sqrt(q2));
+        }
+        classes.basis_to_radius[ig] = inserted.first->second;
+    }
+    return classes;
+}
+
+std::vector<SpeciesProjectorTemplate> build_species_templates(
+    const Lattice& lattice,
+    const PlaneWaveBasis3D& basis,
+    const ReciprocalRadiusClasses& radius_classes,
+    const UPFNonlocalSpecies& species,
+    int thread_count) {
+
+    const int nbasis = basis.size();
+    const int nprojectors =
+        static_cast<int>(species.radial_projectors.size());
+    if (nprojectors == 0) {
+        return {};
+    }
+
+    /*
+     * The radial transform and angular factor depend on species and q, but
+     * not on the ion position.  Build them once and apply exp(-i q.R_I)
+     * only after the DIJ-diagonalized templates are complete.
+     */
+    const int nradii = static_cast<int>(radius_classes.radii.size());
+    Eigen::MatrixXd radial_transforms(nradii, nprojectors);
+    const std::int64_t radial_work =
+        static_cast<std::int64_t>(nradii)
+        * static_cast<std::int64_t>(nprojectors);
+#pragma omp parallel for schedule(static) \
+    if(thread_count > 1 && radial_work >= openmp_minimum_work) \
+    num_threads(thread_count)
+    for (std::int64_t index = 0; index < radial_work; ++index) {
+        const int ip = static_cast<int>(
+            index / static_cast<std::int64_t>(nradii)
+        );
+        const int iradius = static_cast<int>(
+            index % static_cast<std::int64_t>(nradii)
+        );
+        const UPFProjector& projector =
+            species.radial_projectors[ip];
+        radial_transforms(iradius, ip) =
+            radial_fourier_bessel_transform_from_r_times_function_unchecked(
+                projector.angular_momentum,
+                radius_classes.radii[iradius],
+                species.radial_grid_bohr,
+                species.quadrature_weights,
+                projector.r_times_beta
+            );
+    }
+
+    std::vector<SpeciesProjectorTemplate> templates;
+    const double inverse_sqrt_volume =
+        1.0 / std::sqrt(lattice.volume());
+    const auto groups = group_projectors_by_l(species);
+    for (const auto& group : groups) {
+        const int l = group.first;
+        const std::vector<int>& indices = group.second;
+        const int nradial = static_cast<int>(indices.size());
+        Eigen::MatrixXd dij_block(nradial, nradial);
+        for (int i = 0; i < nradial; ++i) {
+            for (int j = 0; j < nradial; ++j) {
+                dij_block(i, j) =
+                    species.dij_hartree(indices[i], indices[j]);
+            }
+        }
+
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(
+            dij_block
+        );
+        if (eigensolver.info() != Eigen::Success) {
+            throw std::runtime_error(
+                "Failed to diagonalize an NC-UPF PP_DIJ l block."
+            );
+        }
+
+        const int nm = 2 * l + 1;
+        Eigen::MatrixXd harmonics(nbasis, nm);
+#pragma omp parallel for schedule(static) \
+    if(thread_count > 1 && \
+       static_cast<long long>(nbasis) * nm >= openmp_minimum_work) \
+    num_threads(thread_count)
+        for (int ig = 0; ig < nbasis; ++ig) {
+            const std::vector<double> values =
+                qe_real_spherical_harmonics(
+                    l,
+                    basis.gvectors[ig].q_cart
+                );
+            for (int m = 0; m < nm; ++m) {
+                harmonics(ig, m) = values[m];
+            }
+        }
+
+        const std::complex<double> prefactor =
+            inverse_sqrt_volume * minus_i_to_power(l);
+        const Eigen::MatrixXcd rotation =
+            eigensolver.eigenvectors()
+                .cast<std::complex<double>>();
+        for (int m = 0; m < nm; ++m) {
+            Eigen::MatrixXcd raw(nbasis, nradial);
+            const std::int64_t raw_work =
+                static_cast<std::int64_t>(nbasis)
+                * static_cast<std::int64_t>(nradial);
+#pragma omp parallel for schedule(static) \
+    if(thread_count > 1 && raw_work >= openmp_minimum_work) \
+    num_threads(thread_count)
+            for (std::int64_t index = 0;
+                 index < raw_work;
+                 ++index) {
+                const int iradial = static_cast<int>(
+                    index / static_cast<std::int64_t>(nbasis)
+                );
+                const int ig = static_cast<int>(
+                    index % static_cast<std::int64_t>(nbasis)
+                );
+                raw(ig, iradial) =
+                    prefactor
+                    * harmonics(ig, m)
+                    * radial_transforms(
+                        radius_classes.basis_to_radius[ig],
+                        indices[iradial]
+                    );
+            }
+
+            Eigen::MatrixXcd rotated(nbasis, nradial);
+            rotated.noalias() = raw * rotation;
+            for (int channel = 0; channel < nradial; ++channel) {
+                const double eigenvalue =
+                    eigensolver.eigenvalues()[channel];
+                if (std::abs(eigenvalue) < zero_tolerance) {
+                    continue;
+                }
+                SpeciesProjectorTemplate projector;
+                projector.beta_G = rotated.col(channel);
+                projector.D = eigenvalue;
+                templates.push_back(std::move(projector));
+            }
+        }
+    }
+    return templates;
 }
 
 } // namespace
@@ -257,8 +426,14 @@ std::vector<NonlocalProjector> build_upf_nonlocal_projectors(
     const Lattice& lattice,
     const PlaneWaveBasis3D& basis,
     const std::vector<UPFNonlocalSpecies>& species,
-    const std::vector<UPFLocalIon>& ions) {
+    const std::vector<UPFLocalIon>& ions,
+    int thread_count) {
 
+    if (thread_count <= 0) {
+        throw std::runtime_error(
+            "UPF nonlocal-projector thread count must be positive."
+        );
+    }
     for (const UPFNonlocalSpecies& one_species : species) {
         validate_species(one_species);
     }
@@ -276,107 +451,62 @@ std::vector<NonlocalProjector> build_upf_nonlocal_projectors(
         }
     }
 
-    std::vector<NonlocalProjector> result;
-    const double inverse_sqrt_volume = 1.0 / std::sqrt(lattice.volume());
-
-    for (int iion = 0; iion < static_cast<int>(ions.size()); ++iion) {
-        const UPFLocalIon& ion = ions[iion];
-        const UPFNonlocalSpecies& one_species = species[ion.species_index];
-        const Eigen::Vector3d R =
-            lattice.cart_from_frac(ion.frac_position);
-        const auto groups = group_projectors_by_l(one_species);
-
-        std::vector<std::vector<double>> radial_transforms(
-            one_species.radial_projectors.size(),
-            std::vector<double>(basis.size(), 0.0)
+    std::vector<std::vector<SpeciesProjectorTemplate>> species_templates(
+        species.size()
+    );
+    const ReciprocalRadiusClasses radius_classes =
+        make_radius_classes(basis);
+    for (int ispecies = 0;
+         ispecies < static_cast<int>(species.size());
+         ++ispecies) {
+        species_templates[ispecies] = build_species_templates(
+            lattice,
+            basis,
+            radius_classes,
+            species[ispecies],
+            thread_count
         );
-        for (int ip = 0;
-             ip < static_cast<int>(one_species.radial_projectors.size());
-             ++ip) {
-            const UPFProjector& projector =
-                one_species.radial_projectors[ip];
-            for (int ig = 0; ig < basis.size(); ++ig) {
-                radial_transforms[ip][ig] =
-                    radial_fourier_bessel_transform_from_r_times_function(
-                        projector.angular_momentum,
-                        basis.gvectors[ig].q_cart.norm(),
-                        one_species.radial_grid_bohr,
-                        one_species.quadrature_weights,
-                        projector.r_times_beta
-                    );
-            }
-        }
-
-        for (const auto& group : groups) {
-            const int l = group.first;
-            const std::vector<int>& indices = group.second;
-            const int nradial = static_cast<int>(indices.size());
-            Eigen::MatrixXd dij_block(nradial, nradial);
-            for (int i = 0; i < nradial; ++i) {
-                for (int j = 0; j < nradial; ++j) {
-                    dij_block(i, j) =
-                        one_species.dij_hartree(indices[i], indices[j]);
-                }
-            }
-
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(
-                dij_block
-            );
-            if (eigensolver.info() != Eigen::Success) {
-                throw std::runtime_error(
-                    "Failed to diagonalize an NC-UPF PP_DIJ l block."
-                );
-            }
-
-            const std::complex<double> angular_phase =
-                minus_i_to_power(l);
-            const int nm = 2 * l + 1;
-            for (int m = 0; m < nm; ++m) {
-                std::vector<Eigen::VectorXcd> raw_projectors;
-                raw_projectors.reserve(nradial);
-                for (int iradial = 0; iradial < nradial; ++iradial) {
-                    Eigen::VectorXcd raw =
-                        Eigen::VectorXcd::Zero(basis.size());
-                    const int ip = indices[iradial];
-                    for (int ig = 0; ig < basis.size(); ++ig) {
-                        const Eigen::Vector3d& q =
-                            basis.gvectors[ig].q_cart;
-                        const std::vector<double> harmonics =
-                            qe_real_spherical_harmonics(l, q);
-                        raw[ig] =
-                            inverse_sqrt_volume
-                            * angular_phase
-                            * harmonics[m]
-                            * radial_transforms[ip][ig]
-                            * translation_phase(q, R);
-                    }
-                    raw_projectors.push_back(std::move(raw));
-                }
-
-                for (int channel = 0; channel < nradial; ++channel) {
-                    const double eigenvalue =
-                        eigensolver.eigenvalues()[channel];
-                    if (std::abs(eigenvalue) < zero_tolerance) {
-                        continue;
-                    }
-
-                    NonlocalProjector projector;
-                    projector.beta_G =
-                        Eigen::VectorXcd::Zero(basis.size());
-                    projector.D = eigenvalue;
-                    projector.ion_index = iion;
-                    for (int iradial = 0;
-                         iradial < nradial;
-                         ++iradial) {
-                        projector.beta_G +=
-                            eigensolver.eigenvectors()(iradial, channel)
-                            * raw_projectors[iradial];
-                    }
-                    result.push_back(std::move(projector));
-                }
-            }
-        }
     }
 
+    std::vector<int> ion_offsets(ions.size() + 1, 0);
+    for (int iion = 0; iion < static_cast<int>(ions.size()); ++iion) {
+        ion_offsets[iion + 1] =
+            ion_offsets[iion]
+            + static_cast<int>(
+                species_templates[ions[iion].species_index].size()
+            );
+    }
+    std::vector<NonlocalProjector> result(ion_offsets.back());
+    const long long phase_work =
+        static_cast<long long>(basis.size())
+        * static_cast<long long>(ions.size());
+#pragma omp parallel for schedule(static) \
+    if(thread_count > 1 && phase_work >= openmp_minimum_work) \
+    num_threads(thread_count)
+    for (int iion = 0; iion < static_cast<int>(ions.size()); ++iion) {
+        const UPFLocalIon& ion = ions[iion];
+        const Eigen::Vector3d R =
+            lattice.cart_from_frac(ion.frac_position);
+        Eigen::VectorXcd phase(basis.size());
+        for (int ig = 0; ig < basis.size(); ++ig) {
+            phase[ig] = translation_phase(
+                basis.gvectors[ig].q_cart,
+                R
+            );
+        }
+
+        const auto& templates =
+            species_templates[ion.species_index];
+        for (int itemplate = 0;
+             itemplate < static_cast<int>(templates.size());
+             ++itemplate) {
+            NonlocalProjector& projector =
+                result[ion_offsets[iion] + itemplate];
+            projector.beta_G =
+                templates[itemplate].beta_G.cwiseProduct(phase);
+            projector.D = templates[itemplate].D;
+            projector.ion_index = iion;
+        }
+    }
     return result;
 }

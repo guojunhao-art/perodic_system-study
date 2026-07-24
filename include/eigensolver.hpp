@@ -13,6 +13,11 @@ Eigen::MatrixXcd append_columns(
     const Eigen::MatrixXcd& A,
     const std::vector<Eigen::VectorXcd>& new_cols);
 
+Eigen::MatrixXcd orthonormalize_correction_block(
+    const Eigen::Ref<const Eigen::MatrixXcd>& subspace,
+    const Eigen::Ref<const Eigen::MatrixXcd>& raw_corrections,
+    double drop_tol = 1.0e-14);
+
 struct DavidsonTimingBreakdown {
     double initial_orthonormalization_seconds = 0.0;
     double projected_matrix_seconds = 0.0;

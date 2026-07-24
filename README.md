@@ -386,8 +386,17 @@ $$
 X=VA,\qquad HX=WA,
 $$
 
-所以重启本身也不需要额外的 $H\psi$。代码会先把修正向量对 $V$ 和同批修正方向
-做两遍正交化；如果没有留下新的线性无关方向，就从 $(X,HX)$ 重启，而不是在同一个
+所以重启本身也不需要额外的 $H\psi$。$V$ 和 $W$ 在每次 Davidson 求解开始时按
+`max_subspace` 一次性分配，后续扩展与厚重启只更新有效列，不再重新分配并复制
+整个长矩阵。修正方向组成块 $T$，先以块矩阵乘法执行两遍
+
+$$
+T\leftarrow T-V(V^\dagger T),
+$$
+
+再由小 Gram 矩阵 $T^\dagger T$ 做对称正交化并删除线性相关方向。这样保持两遍
+正交化的数值稳定性，同时把大量 BLAS-2 矩阵--向量操作改为 BLAS-3 矩阵--矩阵
+操作。如果没有留下新的线性无关方向，代码就从 $(X,HX)$ 重启，而不是在同一个
 子空间里无限循环。
 
 默认 SCF 行采用 VASP 风格：
@@ -420,14 +429,14 @@ SCF 总时间。平均 block 宽度可由 `N_Hpsi/N_Hblock` 估计。性能汇�
 - `Ritz(X/HX)`：两次长矩阵旋转 $X=VA$ 和 $HX=WA$；
 - `residual+prec`：残差构造、范数计算和 Davidson 对角预处理；
 - `result_copy`：把本轮本征值、Ritz 轨道和残差复制到返回结果；
-- `correction_ortho`：修正方向对旧子空间及同批方向的两遍正交化；
+- `correction_ortho`：修正块对旧子空间的两遍块投影以及基于
+  $T^\dagger T$ 的对称正交化；
 - `restart`：厚重启时用 $(X,HX)$ 替换 $(V,W)$；
-- `assemble(T)`：把通过筛选的修正向量组装为 Hamiltonian 批处理块；
-- `expand/copy`：重新分配并扩展、复制 $(V,W)$；
+- `assemble(T)`：保留的兼容计时项；修正方向现已直接构造为块，因此应接近零；
+- `expand/copy`：把新 $(T,HT)$ 写入预分配的 $(V,W)$ 有效列；
 - `unaccounted`：原 `ortho/Ritz/other` 扣除上述细项后的剩余时间。
 
-这些细项只增加累计墙钟计时，不改变 Davidson 数值路径。`unaccounted` 可用于发现
-尚未单独包住的对象构造、结果复制或日志开销。
+`unaccounted` 可用于发现尚未单独包住的对象构造、结果复制或日志开销。
 MPI 输出中的 SCF 阶段取最慢 rank，$H\psi$ 与密度内部计时则为 rank 求和；单 rank
 计算时二者都是普通墙钟时间。
 `h2_opt` 的每个几何点也会显示 `N_Hpsi`、`N_Hblock`、$H\psi$ 耗时与 SCF 耗时。

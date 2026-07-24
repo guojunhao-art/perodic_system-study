@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -43,6 +44,80 @@ std::vector<double> make_test_potential(const FFTGrid& grid) {
         }
     }
     return potential;
+}
+
+Eigen::MatrixXcd make_deterministic_matrix(
+    int rows,
+    int cols,
+    int offset = 0) {
+
+    Eigen::MatrixXcd matrix(rows, cols);
+    for (int j = 0; j < cols; ++j) {
+        for (int i = 0; i < rows; ++i) {
+            const double x = static_cast<double>(
+                (i + 1) * (j + offset + 2)
+            );
+            matrix(i, j) = std::complex<double>(
+                std::sin(0.137 * x + 0.31 * (j + offset)),
+                std::cos(0.193 * x - 0.17 * (j + offset))
+            );
+        }
+    }
+    return matrix;
+}
+
+void test_block_correction_orthonormalization() {
+    constexpr int rows = 128;
+    constexpr int subspace_columns = 7;
+
+    const Eigen::MatrixXcd subspace = orthonormalize_columns(
+        make_deterministic_matrix(rows, subspace_columns)
+    );
+    const Eigen::MatrixXcd independent =
+        make_deterministic_matrix(rows, 3, 13);
+
+    Eigen::MatrixXcd raw(rows, 4);
+    raw.leftCols(3) = independent;
+    raw.col(3) = raw.col(0) - 0.375 * raw.col(1);
+
+    const Eigen::MatrixXcd coefficients =
+        make_deterministic_matrix(
+            subspace_columns,
+            raw.cols(),
+            29
+        );
+    raw.noalias() += subspace * coefficients;
+
+    const Eigen::MatrixXcd correction =
+        orthonormalize_correction_block(subspace, raw);
+
+    if (correction.cols() != 3) {
+        throw std::runtime_error(
+            "Block correction orthogonalization did not drop a "
+            "dependent direction."
+        );
+    }
+
+    const double cross_error =
+        (subspace.adjoint() * correction).norm();
+    const double internal_error = (
+        correction.adjoint() * correction
+        - Eigen::MatrixXcd::Identity(
+            correction.cols(),
+            correction.cols()
+        )
+    ).norm();
+
+    require_less(
+        cross_error,
+        1.0e-11,
+        "block correction/subspace orthogonality error"
+    );
+    require_less(
+        internal_error,
+        1.0e-11,
+        "block correction internal orthogonality error"
+    );
 }
 
 void test_davidson_against_dense_reference() {
@@ -175,6 +250,7 @@ void test_davidson_against_dense_reference() {
 
 int main() {
     try {
+        test_block_correction_orthonormalization();
         test_davidson_against_dense_reference();
         std::cout << "Davidson regression test passed.\n";
         return 0;

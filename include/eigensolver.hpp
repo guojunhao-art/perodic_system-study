@@ -26,6 +26,7 @@ struct DavidsonResult {
     int max_residual_band = -1;
     double hamiltonian_seconds = 0.0;
     double subspace_diagonalization_seconds = 0.0;
+    double total_seconds = 0.0;
     double projected_hermiticity_error = 0.0;
     bool converged = false;
     bool stagnated = false;

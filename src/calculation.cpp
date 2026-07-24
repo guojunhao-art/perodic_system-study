@@ -342,7 +342,7 @@ SinglePointResult run_single_point(
     for (const KPointHamiltonian& point : kpoint_hamiltonians) {
         require_fft_grid_for_basis_products(point.basis, grid);
     }
-    FFTWorkspace fft(grid);
+    FFTWorkspace fft(grid, config.fft_threads);
 
     if (log_stream && print_setup) {
         *log_stream
@@ -363,7 +363,8 @@ SinglePointResult run_single_point(
             << "    NSPIN = " << options.nspin
             << "    ENCUT = " << ecut_hartree << " Ha\n"
             << "  FFT grid = "
-            << (automatic_fft_grid ? "automatic" : "explicit") << "\n"
+            << (automatic_fft_grid ? "automatic" : "explicit")
+            << "    FFT threads = " << fft.thread_count << "\n"
             << "  KPOINTS = " << config.kpoints.description
             << "    NKPTS = " << config.kpoints.points.size()
             << "    NPROJ(radial) = " << radial_projector_count << "\n"

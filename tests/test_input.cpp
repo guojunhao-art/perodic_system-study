@@ -143,6 +143,8 @@ int main() {
                      config.fft_grid[1] == 26 &&
                      config.fft_grid[2] == 28,
                      "FFT grid parsing mismatch");
+        require_true(config.fft_threads == 3,
+                     "FFT thread-count parsing mismatch");
         require_true(!config.nbands_auto && config.scf.nbands == 9,
                      "nbands parsing mismatch");
         require_true(
@@ -177,6 +179,10 @@ int main() {
         require_true(
             relax_config.fft_grid == std::array<int, 3>{{0, 0, 0}},
             "fft_grid = auto parsing mismatch"
+        );
+        require_true(
+            relax_config.fft_threads == 0,
+            "fft_threads = auto parsing mismatch"
         );
         require_true(
             relax_config.calculation == CalculationType::Relax,
@@ -234,6 +240,10 @@ int main() {
 
         const CalculationConfig mesh_config = read_calculation_config(
             data_path("kpoints_mesh_scf.in")
+        );
+        require_true(
+            mesh_config.fft_threads == 1,
+            "omitted fft_threads should preserve the serial default"
         );
         require_true(mesh_config.kpoints.points.size() == 6,
                      "Monkhorst-Pack mesh size mismatch");

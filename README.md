@@ -82,6 +82,26 @@ k 点采用循环分配：rank $r$ 处理 $r,r+N_{\mathrm{rank}},\ldots$。每�
 非局域力也先局部计算再求和。有效进程数不超过 k 点数；Gamma-only 计算不会从
 这一层并行中获得加速。未启用 MPI 时，同一套代码自动退化为原来的单进程路径。
 
+单个 k 点内部可通过 threaded FFTW 和 OpenMP 并行。输入中省略 `fft_threads`
+时保留单线程默认；写成
+
+```text
+fft_threads = auto
+```
+
+会读取 OpenMP 可用线程数，因而可以用 `OMP_NUM_THREADS` 控制：
+
+```bash
+OMP_NUM_THREADS=8 ./pwdft examples/o2_triplet_scf.in
+```
+
+也可以直接写 `fft_threads = 8`。该线程数同时用于 FFTW plan、Eigen 的线程上限、
+平面波 scatter/gather、实空间势乘法、密度累加和 Hartree 网格循环。MPI 构建中每个
+rank 各自使用该线程数，因此混合并行时应按每个 rank 分配的 CPU 核数设置
+`OMP_NUM_THREADS`，避免过度订阅。CMake 可用
+`PWDFT_ENABLE_FFTW_THREADS=OFF` 或 `PWDFT_ENABLE_OPENMP=OFF` 分别关闭两层线程
+支持。
+
 ### 1.1 下载并检查 NC-UPF
 
 第一阶段建议使用 Quantum ESPRESSO 官方库中的两个文件：
@@ -138,6 +158,7 @@ pseudo = Si pseudopotentials/Si.pz-vbc.UPF
 pseudo = H  pseudopotentials/H.pz-vbc.UPF
 ecut_ha = 10.0
 fft_grid = auto
+fft_threads = auto
 kpoints = gamma
 ```
 
@@ -385,7 +406,16 @@ $\sum_{\sigma\mathbf kn}w_{\mathbf k}f_{\sigma n\mathbf k}
 Davidson 精度，但不参与外层收敛判断。只有 `|dE|` 和 `|d eps|` 同时小于
 `energy_tolerance_ha` 才满足外层判据。末尾还会给出累计
 `N_Hpsi`、`N_Hblock`、Davidson 迭代/重启数、`Hpsi_time`、子空间对角化时间和
-SCF 总时间。平均 block 宽度可由 `N_Hpsi/N_Hblock` 估计。
+SCF 总时间。平均 block 宽度可由 `N_Hpsi/N_Hblock` 估计。性能汇总进一步拆分为
+
+- SCF 阶段墙钟时间：输入势、本征求解、占据、密度/动能、输出势/能量和混合；
+- $H\psi$：scatter、反向/正向 FFT、$V(\mathbf r)\psi$、gather+动能和非局域势；
+- 密度构造：有效轨道数、scatter、反向 FFT 和实空间累加。
+
+其中 `subspace_time` 只统计小矩阵对角化；`ortho/Ritz/other` 是 Davidson 总时间
+扣除 $H\psi$ 和小矩阵对角化后的余量，主要包括正交化、Ritz 矩阵乘法、残差和预处理。
+MPI 输出中的 SCF 阶段取最慢 rank，$H\psi$ 与密度内部计时则为 rank 求和；单 rank
+计算时二者都是普通墙钟时间。
 `h2_opt` 的每个几何点也会显示 `N_Hpsi`、`N_Hblock`、$H\psi$ 耗时与 SCF 耗时。
 可以用下面三组输入建立串行基线：
 
@@ -450,9 +480,11 @@ make test_batched_hamiltonian
 ./test_batched_hamiltonian
 ```
 
-完成这一层串行批处理后，再根据 10/15/20 Ha 的 `Hpsi_time` 和平均 block 宽度选择
-FFTW threads 或外层 OpenMP。Rayleigh--Ritz 只有在 `subspace_time` 占比显著上升后才
-值得优先接入并行线性代数。
+批量 plan 使用与标量 plan 相同的 `fft_threads`。FFT 前后的连续网格操作由 OpenMP
+处理；FFT 本身由 `libfftw3_threads` 处理。`test_batched_hamiltonian` 还比较一线程
+和两线程的 $H\psi$、密度与 Hartree 势，并检查计时计数器。实际任务应根据新的分阶段输出做
+1/2/4/8/16 线程强标度测试；Rayleigh--Ritz/正交化只有在 `eigensolver` 与
+`Hpsi_time` 的差额明显上升后才值得优先接入并行线性代数。
 
 ## 2. 单位和 Fourier 约定
 
@@ -682,6 +714,25 @@ $$
 ```bash
 ./pwdft examples/h_atom_spin_scf.in
 ```
+
+也可用 O₂ 示例检查非受限 SCF 能否从非整数初猜磁矩回到三重态：
+
+```bash
+OMP_NUM_THREADS=8 ./pwdft examples/o2_triplet_scf.in
+```
+
+在 12 Å 立方盒、$r_{\mathrm{OO}}=1.21$ Å、`ecut_ha = 30` 的一次参考计算中，
+$M_0=1\ \mu_B$ 最终得到
+
+$$
+N_\uparrow/N_\downarrow=5/7,\qquad M=-2\ \mu_B,
+$$
+
+以及 $E=-31.73006235859$ Ha、轴向力
+$F_z=\mp0.04904463$ Ha/Bohr。这里 $M=-2\ \mu_B$ 与
+$M=+2\ \mu_B$ 通过全局自旋翻转相连；无外磁场时二者物理等价，也说明
+`starting_magnetization` 只是初猜而不是约束。该结果目前是程序内参考值，仍需
+使用相同赝势、截断能、超胞和 FFT 网格与 Quantum ESPRESSO 交叉验证。
 
 其中 $\sigma=k_BT$。令 $p_n=f_n/2$，无量纲电子熵是
 

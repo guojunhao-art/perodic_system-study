@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(PWDFT_ENABLE_MPI "Enable process-level k-point MPI parallelism" OFF)
+option(PWDFT_ENABLE_FFTW_THREADS "Enable threaded FFTW plans" ON)
+option(PWDFT_ENABLE_OPENMP "Enable OpenMP real/reciprocal-grid loops" ON)
 
 find_package(Eigen3 QUIET)
 find_package(PkgConfig QUIET)
@@ -31,6 +33,7 @@ endif()
 
 add_library(pw_dft_core
     src/calculation.cpp
+    src/fft_workspace.cpp
     src/relaxation.cpp
     src/hamiltonian.cpp
     src/input.cpp
@@ -59,7 +62,39 @@ else()
     target_include_directories(pw_dft_core PUBLIC /usr/include/eigen3)
 endif()
 
-target_link_libraries(pw_dft_core PUBLIC fftw3 m)
+target_link_libraries(pw_dft_core PUBLIC m)
+
+if (PWDFT_ENABLE_FFTW_THREADS)
+    find_package(Threads REQUIRED)
+    find_library(FFTW3_THREADS_LIBRARY NAMES fftw3_threads)
+    if (NOT FFTW3_THREADS_LIBRARY)
+        message(FATAL_ERROR
+            "Threaded FFTW was requested, but libfftw3_threads was not found."
+        )
+    endif()
+    target_compile_definitions(
+        pw_dft_core PUBLIC PWDFT_USE_FFTW_THREADS=1
+    )
+    target_link_libraries(
+        pw_dft_core PUBLIC
+        ${FFTW3_THREADS_LIBRARY}
+        fftw3
+        Threads::Threads
+    )
+else()
+    target_link_libraries(pw_dft_core PUBLIC fftw3)
+endif()
+
+if (PWDFT_ENABLE_OPENMP)
+    find_package(OpenMP QUIET COMPONENTS CXX)
+    if (OpenMP_CXX_FOUND)
+        target_link_libraries(pw_dft_core PUBLIC OpenMP::OpenMP_CXX)
+    else()
+        message(WARNING
+            "OpenMP was requested but not found; grid loops remain serial."
+        )
+    endif()
+endif()
 
 if (PWDFT_ENABLE_MPI)
     find_package(MPI REQUIRED COMPONENTS CXX)

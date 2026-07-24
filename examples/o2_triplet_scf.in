@@ -1,0 +1,34 @@
+calculation = scf
+structure = POSCAR_O2
+pseudo = O ../pseudopotentials/O.pz-mt.UPF
+xc = pz_lda
+kpoints = gamma
+
+# O.pz-mt.UPF is an old NC potential without a useful cutoff recommendation.
+# Start at 30 Ha (60 Ry), then compare against 40 Ha for convergence.
+ecut_ha = 30.0
+fft_grid = auto
+fft_threads = auto
+ewald_width_bohr = 0.70
+
+# Two O atoms contribute 12 valence electrons. Deliberately start from
+# M = 1 mu_B (N_up/down = 6.5/5.5) and check whether the unrestricted SCF
+# returns to either spin-inverted triplet solution: N_up/down = 7/5 or 5/7,
+# with |M| = 2 mu_B. The sign is arbitrary without an external magnetic field.
+nelect = auto
+nbands = 12
+nspin = 2
+starting_magnetization = 1.0
+occupations = zero_t
+
+scf_max_iterations = 240
+density_tolerance = 1.0e-7
+energy_tolerance_ha = 1.0e-6
+eigensolver_max_iterations = 100
+eigensolver_initial_tolerance_ha = 1.0e-7
+eigensolver_tolerance_ha = 2.0e-10
+mixing_alpha = 0.10
+pulay_max_history = 8
+pulay_min_history = 2
+pulay_regularization = 1.0e-12
+verbosity = compact

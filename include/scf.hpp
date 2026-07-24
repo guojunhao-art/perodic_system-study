@@ -16,6 +16,16 @@ enum class SCFVerbosity {
     Detailed
 };
 
+struct SCFPerformanceBreakdown {
+    double input_potential_seconds = 0.0;
+    double eigensolver_seconds = 0.0;
+    double occupations_seconds = 0.0;
+    double density_energy_seconds = 0.0;
+    double output_potential_energy_seconds = 0.0;
+    double mixing_seconds = 0.0;
+    FFTPerformanceCounters fft;
+};
+
 /*
  * Numerical controls for one self-consistent Kohn--Sham calculation.
  * Energy-like quantities and tolerances use Hartree atomic units.
@@ -91,7 +101,9 @@ struct SCFResult {
     long long eigensolver_restarts = 0;
     double eigensolver_hamiltonian_seconds = 0.0;
     double eigensolver_subspace_seconds = 0.0;
+    double eigensolver_other_seconds = 0.0;
     double wall_time_seconds = 0.0;
+    SCFPerformanceBreakdown performance;
 
     /*
      * E at zero T, or the Mermin free energy at finite smearing, including
@@ -149,7 +161,9 @@ struct KPointSCFResult {
     long long eigensolver_restarts = 0;
     double eigensolver_hamiltonian_seconds = 0.0;
     double eigensolver_subspace_seconds = 0.0;
+    double eigensolver_other_seconds = 0.0;
     double wall_time_seconds = 0.0;
+    SCFPerformanceBreakdown performance;
 
     double variational_energy = 0.0;
 };

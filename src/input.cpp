@@ -537,6 +537,17 @@ CalculationConfig read_calculation_config(const std::string& path) {
                     }
                 }
             }
+        } else if (key == "fft_threads") {
+            if (lowercase(value) == "auto") {
+                config.fft_threads = 0;
+            } else {
+                config.fft_threads = parse_integer(value, key);
+                if (config.fft_threads <= 0) {
+                    throw std::runtime_error(
+                        "fft_threads must be auto or a positive integer."
+                    );
+                }
+            }
         } else if (key == "ewald_width_bohr") {
             config.ewald_width_bohr = parse_double(value, key);
             require_positive(config.ewald_width_bohr, key);

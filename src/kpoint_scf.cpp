@@ -17,12 +17,71 @@
 
 namespace {
 
+constexpr long long openmp_minimum_work = 32768;
+
 double maximum_residual(const std::vector<double>& residuals) {
     double maximum = 0.0;
     for (double residual : residuals) {
         maximum = std::max(maximum, residual);
     }
     return maximum;
+}
+
+double elapsed_seconds(std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - start
+    ).count();
+}
+
+FFTPerformanceCounters sum_fft_performance(
+    const FFTPerformanceCounters& local) {
+
+    FFTPerformanceCounters total;
+    total.hamiltonian_vectors =
+        parallel::sum(local.hamiltonian_vectors);
+    total.hamiltonian_block_calls =
+        parallel::sum(local.hamiltonian_block_calls);
+    total.hamiltonian_scatter_seconds =
+        parallel::sum(local.hamiltonian_scatter_seconds);
+    total.hamiltonian_backward_fft_seconds =
+        parallel::sum(local.hamiltonian_backward_fft_seconds);
+    total.hamiltonian_local_multiply_seconds =
+        parallel::sum(local.hamiltonian_local_multiply_seconds);
+    total.hamiltonian_forward_fft_seconds =
+        parallel::sum(local.hamiltonian_forward_fft_seconds);
+    total.hamiltonian_gather_kinetic_seconds =
+        parallel::sum(local.hamiltonian_gather_kinetic_seconds);
+    total.hamiltonian_nonlocal_seconds =
+        parallel::sum(local.hamiltonian_nonlocal_seconds);
+    total.density_orbitals =
+        parallel::sum(local.density_orbitals);
+    total.density_scatter_seconds =
+        parallel::sum(local.density_scatter_seconds);
+    total.density_backward_fft_seconds =
+        parallel::sum(local.density_backward_fft_seconds);
+    total.density_accumulation_seconds =
+        parallel::sum(local.density_accumulation_seconds);
+    return total;
+}
+
+SCFPerformanceBreakdown reduce_performance(
+    const SCFPerformanceBreakdown& local) {
+
+    SCFPerformanceBreakdown reduced;
+    reduced.input_potential_seconds =
+        parallel::maximum(local.input_potential_seconds);
+    reduced.eigensolver_seconds =
+        parallel::maximum(local.eigensolver_seconds);
+    reduced.occupations_seconds =
+        parallel::maximum(local.occupations_seconds);
+    reduced.density_energy_seconds =
+        parallel::maximum(local.density_energy_seconds);
+    reduced.output_potential_energy_seconds =
+        parallel::maximum(local.output_potential_energy_seconds);
+    reduced.mixing_seconds =
+        parallel::maximum(local.mixing_seconds);
+    reduced.fft = sum_fft_performance(local.fft);
+    return reduced;
 }
 
 int electronic_state_index(
@@ -272,6 +331,18 @@ void print_summary(
         result.energy.free_energy + result.energy.ion_smooth;
     const double sigma0_with_ions =
         result.energy.sigma0_estimate + result.energy.ion_smooth;
+    const FFTPerformanceCounters& fft_timing = result.performance.fft;
+    const double hpsi_accounted =
+        fft_timing.hamiltonian_scatter_seconds
+        + fft_timing.hamiltonian_backward_fft_seconds
+        + fft_timing.hamiltonian_local_multiply_seconds
+        + fft_timing.hamiltonian_forward_fft_seconds
+        + fft_timing.hamiltonian_gather_kinetic_seconds
+        + fft_timing.hamiltonian_nonlocal_seconds;
+    const double hpsi_overhead = std::max(
+        0.0,
+        result.eigensolver_hamiltonian_seconds - hpsi_accounted
+    );
     out << "--------------------------------------------------------------------------------\n"
         << " " << std::setw(4) << result.iterations
         << " F= " << std::scientific << std::setprecision(12)
@@ -300,11 +371,53 @@ void print_summary(
         << "  subspace_time"
         << (parallel::size() > 1 ? "(rank-sum)" : "")
         << " = "
-        << result.eigensolver_subspace_seconds << " s\n"
+        << result.eigensolver_subspace_seconds << " s"
+        << "  ortho/Ritz/other"
+        << (parallel::size() > 1 ? "(rank-sum)" : "")
+        << " = "
+        << result.eigensolver_other_seconds << " s\n"
         << "  SCF wall time"
         << (parallel::size() > 1 ? "(max-rank)" : "")
         << " = "
-        << result.wall_time_seconds << " s\n";
+        << result.wall_time_seconds << " s\n"
+        << "  phase wall time"
+        << (parallel::size() > 1 ? "(max-rank)" : "")
+        << ": V_in = " << result.performance.input_potential_seconds
+        << "  eigensolver = " << result.performance.eigensolver_seconds
+        << "  occupations = " << result.performance.occupations_seconds
+        << "  density/kinetic = "
+        << result.performance.density_energy_seconds
+        << "  V_out/energy = "
+        << result.performance.output_potential_energy_seconds
+        << "  mixing = " << result.performance.mixing_seconds << " s\n"
+        << "  Hpsi breakdown"
+        << (parallel::size() > 1 ? "(rank-sum)" : "")
+        << ": vectors/blocks = "
+        << result.performance.fft.hamiltonian_vectors << " / "
+        << result.performance.fft.hamiltonian_block_calls
+        << "  scatter = "
+        << result.performance.fft.hamiltonian_scatter_seconds
+        << "  FFT(back/forward) = "
+        << result.performance.fft.hamiltonian_backward_fft_seconds
+        << " / "
+        << result.performance.fft.hamiltonian_forward_fft_seconds
+        << "  V(r)*psi = "
+        << result.performance.fft.hamiltonian_local_multiply_seconds
+        << "  gather+T = "
+        << result.performance.fft.hamiltonian_gather_kinetic_seconds
+        << "  V_NL = "
+        << result.performance.fft.hamiltonian_nonlocal_seconds
+        << "  overhead = " << hpsi_overhead << " s\n"
+        << "  density breakdown"
+        << (parallel::size() > 1 ? "(rank-sum)" : "")
+        << ": orbitals = "
+        << result.performance.fft.density_orbitals
+        << "  scatter = "
+        << result.performance.fft.density_scatter_seconds
+        << "  FFT(back) = "
+        << result.performance.fft.density_backward_fft_seconds
+        << "  accumulate = "
+        << result.performance.fft.density_accumulation_seconds << " s\n";
     out.flags(flags);
     out.precision(precision);
 }
@@ -322,6 +435,8 @@ KPointSCFResult run_kpoint_scf(
     std::ostream* log_stream) {
 
     const auto scf_start = std::chrono::steady_clock::now();
+    const FFTPerformanceCounters fft_performance_start = fft.performance;
+    SCFPerformanceBreakdown local_performance;
     validate_inputs(kpoints, fft, ionic_potential, options, initial_guess);
     EigensolverToleranceSchedule eigensolver_tolerances(
         options.eigensolver_initial_tolerance,
@@ -450,6 +565,7 @@ KPointSCFResult run_kpoint_scf(
 
     for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
         const double eigensolver_tolerance = eigensolver_tolerances.current();
+        auto phase_start = std::chrono::steady_clock::now();
         const std::vector<double> density_input =
             sum_spin_densities(spin_densities);
         const auto hartree_input = build_hartree_potential(
@@ -476,6 +592,8 @@ KPointSCFResult run_kpoint_scf(
                 ionic_potential, hartree_input, xc_input.Vxc_down
             );
         }
+        local_performance.input_potential_seconds +=
+            elapsed_seconds(phase_start);
 
         std::vector<DavidsonResult> solutions(state_count);
         int local_eigensolver_steps = 0;
@@ -484,6 +602,7 @@ KPointSCFResult run_kpoint_scf(
         int local_eigensolver_restarts = 0;
         double local_hamiltonian_seconds = 0.0;
         double local_subspace_seconds = 0.0;
+        double local_eigensolver_other_seconds = 0.0;
         double local_maximum_residual = 0.0;
         double local_residual_square_sum = 0.0;
         int local_residual_count = 0;
@@ -507,6 +626,8 @@ KPointSCFResult run_kpoint_scf(
                     const int state = electronic_state_index(
                         spin, ik, kpoint_count
                     );
+                    const auto eigensolver_start =
+                        std::chrono::steady_clock::now();
                     DavidsonResult solution =
                         davidson_lowest_eigenstates(
                             point.basis,
@@ -524,6 +645,8 @@ KPointSCFResult run_kpoint_scf(
                                 && options.verbosity ==
                                     SCFVerbosity::Detailed
                         );
+                    local_performance.eigensolver_seconds +=
+                        elapsed_seconds(eigensolver_start);
                     const double residual = maximum_residual(
                         solution.residual_norms
                     );
@@ -557,6 +680,12 @@ KPointSCFResult run_kpoint_scf(
                         solution.hamiltonian_seconds;
                     local_subspace_seconds +=
                         solution.subspace_diagonalization_seconds;
+                    local_eigensolver_other_seconds += std::max(
+                        0.0,
+                        solution.total_seconds
+                            - solution.hamiltonian_seconds
+                            - solution.subspace_diagonalization_seconds
+                    );
                     local_maximum_residual = std::max(
                         local_maximum_residual, residual
                     );
@@ -597,6 +726,8 @@ KPointSCFResult run_kpoint_scf(
             parallel::sum(local_hamiltonian_seconds);
         const double iteration_subspace_seconds =
             parallel::sum(local_subspace_seconds);
+        const double iteration_eigensolver_other_seconds =
+            parallel::sum(local_eigensolver_other_seconds);
         const double iteration_maximum_residual =
             parallel::maximum(local_maximum_residual);
         const double iteration_residual_square_sum =
@@ -620,7 +751,10 @@ KPointSCFResult run_kpoint_scf(
         result.eigensolver_hamiltonian_seconds +=
             iteration_hamiltonian_seconds;
         result.eigensolver_subspace_seconds += iteration_subspace_seconds;
+        result.eigensolver_other_seconds +=
+            iteration_eigensolver_other_seconds;
 
+        phase_start = std::chrono::steady_clock::now();
         std::vector<double> packed_eigenvalues(
             static_cast<std::size_t>(state_count) * options.nbands,
             0.0
@@ -663,7 +797,10 @@ KPointSCFResult run_kpoint_scf(
                 options.nspin == 1 ? 2.0 : 1.0,
                 static_cast<double>(options.nspin)
             );
+        local_performance.occupations_seconds +=
+            elapsed_seconds(phase_start);
 
+        phase_start = std::chrono::steady_clock::now();
         std::vector<std::vector<double>> spin_density_output(
             options.nspin,
             std::vector<double>(fft.grid.ngrid, 0.0)
@@ -713,6 +850,10 @@ KPointSCFResult run_kpoint_scf(
                             occupations.occupations[state],
                             volume
                         );
+#pragma omp parallel for schedule(static) \
+    if(fft.thread_count > 1 && \
+       fft.grid.ngrid >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
                     for (int grid_index = 0;
                          grid_index < fft.grid.ngrid;
                          ++grid_index) {
@@ -760,7 +901,10 @@ KPointSCFResult run_kpoint_scf(
             sum_spin_densities(spin_density_output);
         const double kinetic_energy = parallel::sum(local_kinetic_energy);
         const double nonlocal_energy = parallel::sum(local_nonlocal_energy);
+        local_performance.density_energy_seconds +=
+            elapsed_seconds(phase_start);
 
+        phase_start = std::chrono::steady_clock::now();
         const auto hartree_output = build_hartree_potential(
             lattice, fft, density_output
         );
@@ -783,14 +927,23 @@ KPointSCFResult run_kpoint_scf(
         }
         EnergyTerms energy;
         energy.kinetic = kinetic_energy;
+        double external_energy = 0.0;
+        double hartree_energy = 0.0;
+#pragma omp parallel for schedule(static) \
+    reduction(+:external_energy, hartree_energy) \
+    if(fft.thread_count > 1 && \
+       fft.grid.ngrid >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
         for (int grid_index = 0;
              grid_index < fft.grid.ngrid;
              ++grid_index) {
-            energy.external += dV * density_output[grid_index]
+            external_energy += dV * density_output[grid_index]
                 * ionic_potential[grid_index];
-            energy.hartree += 0.5 * dV * density_output[grid_index]
+            hartree_energy += 0.5 * dV * density_output[grid_index]
                 * hartree_output[grid_index];
         }
+        energy.external = external_energy;
+        energy.hartree = hartree_energy;
         energy.exchange = exchange_energy;
         energy.correlation = correlation_energy;
         energy.nonlocal = nonlocal_energy;
@@ -828,6 +981,10 @@ KPointSCFResult run_kpoint_scf(
             : band_energy - previous_band_energy;
         const double band_energy_change =
             std::abs(signed_band_energy_change);
+        local_performance.output_potential_energy_seconds +=
+            elapsed_seconds(phase_start);
+
+        phase_start = std::chrono::steady_clock::now();
         const double density_residual = spin_density_residual(
             spin_densities, spin_density_output, dV
         );
@@ -851,6 +1008,7 @@ KPointSCFResult run_kpoint_scf(
                 spin_electron_counts[spin]
             );
         }
+        local_performance.mixing_seconds += elapsed_seconds(phase_start);
 
         result.iterations = iteration + 1;
         result.final_density_residual = density_residual;
@@ -963,6 +1121,9 @@ KPointSCFResult run_kpoint_scf(
         }
     }
 
+    local_performance.fft =
+        fft.performance.delta_from(fft_performance_start);
+    result.performance = reduce_performance(local_performance);
     const double local_wall_time = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - scf_start
     ).count();

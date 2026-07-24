@@ -2,9 +2,24 @@
 #include "potentials.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
-#include <stdexcept>
+#include <cstdint>
 #include <iostream>
+#include <stdexcept>
+
+namespace {
+
+using PerformanceClock = std::chrono::steady_clock;
+constexpr long long openmp_minimum_work = 32768;
+
+double elapsed_seconds(PerformanceClock::time_point start) {
+    return std::chrono::duration<double>(
+        PerformanceClock::now() - start
+    ).count();
+}
+
+} // namespace
 
 void scatter_coeffs_to_fft_grid(
     const PlaneWaveBasis3D& basis,
@@ -51,38 +66,61 @@ std::vector<std::complex<double>> apply_local_potential_fft(
     }
 
     // 1. c(G) -> FFT reciprocal grid
-    scatter_coeffs_to_fft_grid(
-        basis,
-        fft.grid,
-        coeffs,
-        fft.reciprocal_grid
-    );
+    auto stage_start = PerformanceClock::now();
+    const int nbasis = basis.size();
+    const int ngrid = fft.grid.ngrid;
+#pragma omp parallel for schedule(static) \
+    if(fft.thread_count > 1 && ngrid >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
+    for (int p = 0; p < ngrid; ++p) {
+        fft.reciprocal_grid[p] = std::complex<double>(0.0, 0.0);
+    }
+#pragma omp parallel for schedule(static) \
+    if(fft.thread_count > 1 && nbasis >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
+    for (int ig = 0; ig < nbasis; ++ig) {
+        const int p = fft.grid.index_from_freq(basis.gvectors[ig].n);
+        fft.reciprocal_grid[p] = coeffs[ig];
+    }
+    fft.performance.hamiltonian_scatter_seconds +=
+        elapsed_seconds(stage_start);
 
     // 2. inverse FFT: c(G) -> u_tilde(r)
+    stage_start = PerformanceClock::now();
     fftw_execute(fft.backward_plan);
+    fft.performance.hamiltonian_backward_fft_seconds +=
+        elapsed_seconds(stage_start);
 
     // 3. multiply in real space: V(r) * u_tilde(r)
-    for (int p = 0; p < fft.grid.ngrid; ++p) {
+    stage_start = PerformanceClock::now();
+#pragma omp parallel for schedule(static) \
+    if(fft.thread_count > 1 && ngrid >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
+    for (int p = 0; p < ngrid; ++p) {
         fft.real_grid[p] *= V_r[p];
     }
+    fft.performance.hamiltonian_local_multiply_seconds +=
+        elapsed_seconds(stage_start);
 
     // 4. forward FFT: V(r)u(r) -> raw reciprocal coefficients
+    stage_start = PerformanceClock::now();
     fftw_execute(fft.forward_plan);
+    fft.performance.hamiltonian_forward_fft_seconds +=
+        elapsed_seconds(stage_start);
 
-    // 5. divide by Ngrid to get mathematical Fourier coefficients
-    for (int p = 0; p < fft.grid.ngrid; ++p) {
-        fft.reciprocal_grid[p] =
-            fft.forward_raw[p] / static_cast<double>(fft.grid.ngrid);
+    // 5. Normalize and gather back to the plane-wave basis.
+    stage_start = PerformanceClock::now();
+    const double inverse_grid_size = 1.0 / static_cast<double>(ngrid);
+    std::vector<std::complex<double>> Vc(nbasis);
+#pragma omp parallel for schedule(static) \
+    if(fft.thread_count > 1 && nbasis >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
+    for (int ig = 0; ig < nbasis; ++ig) {
+        const int p = fft.grid.index_from_freq(basis.gvectors[ig].n);
+        Vc[ig] = fft.forward_raw[p] * inverse_grid_size;
     }
-
-    // 6. gather back to plane-wave basis
-    std::vector<std::complex<double>> Vc;
-    gather_coeffs_from_fft_grid(
-        basis,
-        fft.grid,
-        fft.reciprocal_grid,
-        Vc
-    );
+    fft.performance.hamiltonian_gather_kinetic_seconds +=
+        elapsed_seconds(stage_start);
 
     return Vc;
 }
@@ -97,9 +135,17 @@ std::vector<std::complex<double>> apply_hamiltonian_fft(
         apply_local_potential_fft(basis, fft, V_r, coeffs);
 
     // Add kinetic part.
+    const auto stage_start = PerformanceClock::now();
+#pragma omp parallel for schedule(static) \
+    if(fft.thread_count > 1 && basis.size() >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
     for (int ig = 0; ig < basis.size(); ++ig) {
         result[ig] += basis.gvectors[ig].kinetic * coeffs[ig];
     }
+    fft.performance.hamiltonian_gather_kinetic_seconds +=
+        elapsed_seconds(stage_start);
+    fft.performance.hamiltonian_vectors += 1;
+    fft.performance.hamiltonian_block_calls += 1;
 
     return result;
 }
@@ -237,10 +283,13 @@ Eigen::VectorXcd apply_hamiltonian_eigen(
 
     Eigen::VectorXcd Hc = std_to_eigen_vector(Hc_std);
     if (projectors != nullptr) {
+        const auto stage_start = PerformanceClock::now();
         Hc += apply_nonlocal_projectors(
             *projectors,
             c
         );
+        fft.performance.hamiltonian_nonlocal_seconds +=
+            elapsed_seconds(stage_start);
     }
 
     return Hc;
@@ -290,42 +339,76 @@ Eigen::MatrixXcd apply_hamiltonian_to_block(
             static_cast<std::size_t>(count)
             * static_cast<std::size_t>(fft.grid.ngrid);
 
-        std::fill(
-            fft.batch_reciprocal_grid.begin(),
-            fft.batch_reciprocal_grid.begin() + active_size,
-            std::complex<double>(0.0, 0.0)
-        );
+        auto stage_start = PerformanceClock::now();
+#pragma omp parallel for schedule(static) \
+    if(fft.thread_count > 1 && \
+       static_cast<long long>(active_size) >= openmp_minimum_work) \
+    num_threads(fft.thread_count)
+        for (std::int64_t index = 0;
+             index < static_cast<std::int64_t>(active_size);
+             ++index) {
+            fft.batch_reciprocal_grid[
+                static_cast<std::size_t>(index)
+            ] = std::complex<double>(0.0, 0.0);
+        }
 
+#pragma omp parallel for collapse(2) schedule(static) \
+    if(fft.thread_count > 1 && \
+       static_cast<long long>(count) * basis.size() >= \
+           openmp_minimum_work) \
+    num_threads(fft.thread_count)
         for (int local_col = 0; local_col < count; ++local_col) {
-            const std::size_t offset =
-                static_cast<std::size_t>(local_col)
-                * static_cast<std::size_t>(fft.grid.ngrid);
             for (int ig = 0; ig < basis.size(); ++ig) {
+                const std::size_t offset =
+                    static_cast<std::size_t>(local_col)
+                    * static_cast<std::size_t>(fft.grid.ngrid);
                 const int p = grid_indices[ig];
                 fft.batch_reciprocal_grid[offset + p] =
                     V(ig, first + local_col);
             }
         }
+        fft.performance.hamiltonian_scatter_seconds +=
+            elapsed_seconds(stage_start);
 
+        stage_start = PerformanceClock::now();
         fftw_execute(plans.backward);
+        fft.performance.hamiltonian_backward_fft_seconds +=
+            elapsed_seconds(stage_start);
 
+        stage_start = PerformanceClock::now();
+#pragma omp parallel for collapse(2) schedule(static) \
+    if(fft.thread_count > 1 && \
+       static_cast<long long>(count) * fft.grid.ngrid >= \
+           openmp_minimum_work) \
+    num_threads(fft.thread_count)
         for (int local_col = 0; local_col < count; ++local_col) {
-            const std::size_t offset =
-                static_cast<std::size_t>(local_col)
-                * static_cast<std::size_t>(fft.grid.ngrid);
             for (int p = 0; p < fft.grid.ngrid; ++p) {
+                const std::size_t offset =
+                    static_cast<std::size_t>(local_col)
+                    * static_cast<std::size_t>(fft.grid.ngrid);
                 fft.batch_real_grid[offset + p] *= V_r[p];
             }
         }
+        fft.performance.hamiltonian_local_multiply_seconds +=
+            elapsed_seconds(stage_start);
 
+        stage_start = PerformanceClock::now();
         fftw_execute(plans.forward);
+        fft.performance.hamiltonian_forward_fft_seconds +=
+            elapsed_seconds(stage_start);
 
+        stage_start = PerformanceClock::now();
+#pragma omp parallel for collapse(2) schedule(static) \
+    if(fft.thread_count > 1 && \
+       static_cast<long long>(count) * basis.size() >= \
+           openmp_minimum_work) \
+    num_threads(fft.thread_count)
         for (int local_col = 0; local_col < count; ++local_col) {
-            const int column = first + local_col;
-            const std::size_t offset =
-                static_cast<std::size_t>(local_col)
-                * static_cast<std::size_t>(fft.grid.ngrid);
             for (int ig = 0; ig < basis.size(); ++ig) {
+                const int column = first + local_col;
+                const std::size_t offset =
+                    static_cast<std::size_t>(local_col)
+                    * static_cast<std::size_t>(fft.grid.ngrid);
                 const int p = grid_indices[ig];
                 W(ig, column) =
                     fft.batch_reciprocal_grid[offset + p]
@@ -333,11 +416,18 @@ Eigen::MatrixXcd apply_hamiltonian_to_block(
                     + basis.gvectors[ig].kinetic * V(ig, column);
             }
         }
+        fft.performance.hamiltonian_gather_kinetic_seconds +=
+            elapsed_seconds(stage_start);
     }
 
     if (projectors != nullptr) {
+        const auto stage_start = PerformanceClock::now();
         W += apply_nonlocal_projectors(*projectors, V);
+        fft.performance.hamiltonian_nonlocal_seconds +=
+            elapsed_seconds(stage_start);
     }
+    fft.performance.hamiltonian_vectors += ncols;
+    fft.performance.hamiltonian_block_calls += 1;
 
     return W;
 }

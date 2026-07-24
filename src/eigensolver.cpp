@@ -132,6 +132,7 @@ DavidsonResult davidson_lowest_eigenstates(
     }
 
     DavidsonResult result;
+    const auto davidson_start = std::chrono::steady_clock::now();
 
     Eigen::MatrixXcd V = orthonormalize_columns(initial_trials);
 
@@ -293,6 +294,9 @@ DavidsonResult davidson_lowest_eigenstates(
         }
 
         if (all_converged) {
+            result.total_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - davidson_start
+            ).count();
             return result;
         }
 
@@ -345,6 +349,9 @@ DavidsonResult davidson_lowest_eigenstates(
             if (unsuccessful_empty_restarts
                 >= maximum_unsuccessful_empty_restarts) {
                 result.stagnated = true;
+                result.total_seconds = std::chrono::duration<double>(
+                    std::chrono::steady_clock::now() - davidson_start
+                ).count();
                 return result;
             }
             continue;
@@ -382,6 +389,9 @@ DavidsonResult davidson_lowest_eigenstates(
         result.final_subspace_size = V.cols();
     }
 
+    result.total_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - davidson_start
+    ).count();
     return result;
 }
 

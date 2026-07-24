@@ -90,6 +90,16 @@ DavidsonTimingBreakdown sum_davidson_timing(
     total.restart_seconds = values[6];
     total.correction_block_assembly_seconds = values[7];
     total.subspace_expansion_seconds = values[8];
+    total.projected_matrix_full_builds =
+        parallel::sum(local.projected_matrix_full_builds);
+    total.projected_matrix_incremental_updates =
+        parallel::sum(local.projected_matrix_incremental_updates);
+    total.projected_matrix_ritz_reuses =
+        parallel::sum(local.projected_matrix_ritz_reuses);
+    total.correction_blocks =
+        parallel::sum(local.correction_blocks);
+    total.correction_reorthogonalizations =
+        parallel::sum(local.correction_reorthogonalizations);
     return total;
 }
 
@@ -431,6 +441,15 @@ void print_summary(
         << "  expand/copy = "
         << davidson.subspace_expansion_seconds
         << "  unaccounted = " << davidson_unaccounted << " s\n"
+        << "  Davidson reuse"
+        << (parallel::size() > 1 ? "(rank-sum)" : "")
+        << ": VtW full/incremental/Ritz = "
+        << davidson.projected_matrix_full_builds << "/"
+        << davidson.projected_matrix_incremental_updates << "/"
+        << davidson.projected_matrix_ritz_reuses
+        << "  correction reorth/blocks = "
+        << davidson.correction_reorthogonalizations << "/"
+        << davidson.correction_blocks << "\n"
         << "  SCF wall time"
         << (parallel::size() > 1 ? "(max-rank)" : "")
         << " = "

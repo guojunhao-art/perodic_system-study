@@ -223,6 +223,13 @@ void print_compact_summary(
         << "  expand/copy = "
         << davidson.subspace_expansion_seconds
         << "  unaccounted = " << davidson_unaccounted << " s\n"
+        << "  Davidson reuse: VtW full/incremental/Ritz = "
+        << davidson.projected_matrix_full_builds << "/"
+        << davidson.projected_matrix_incremental_updates << "/"
+        << davidson.projected_matrix_ritz_reuses
+        << "  correction reorth/blocks = "
+        << davidson.correction_reorthogonalizations << "/"
+        << davidson.correction_blocks << "\n"
         << "  SCF wall time = " << result.wall_time_seconds << " s\n"
         << "  phase wall time: V_in = "
         << result.performance.input_potential_seconds

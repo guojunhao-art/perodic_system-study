@@ -439,6 +439,7 @@ void test_two_kpoint_scf() {
             output.find("Hpsi breakdown") == std::string::npos ||
             output.find("ortho/Ritz/other") == std::string::npos ||
             output.find("Davidson breakdown") == std::string::npos ||
+            output.find("Davidson reuse") == std::string::npos ||
             output.find("unaccounted") == std::string::npos) {
             throw std::runtime_error(
                 "VASP-style DAV diagnostics are incomplete."

@@ -102,6 +102,51 @@ rank 各自使用该线程数，因此混合并行时应按每个 rank 分配的
 `PWDFT_ENABLE_FFTW_THREADS=OFF` 或 `PWDFT_ENABLE_OPENMP=OFF` 分别关闭两层线程
 支持。
 
+Davidson 的长复矩阵乘法可选择交给外部 BLAS。默认仍使用 Eigen 自带内核；例如
+使用系统 OpenBLAS：
+
+```bash
+cmake -S . -B build-blas \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPWDFT_ENABLE_BLAS=ON \
+  -DPWDFT_BLAS_VENDOR=OpenBLAS
+```
+
+若 Intel MKL 与 Intel MPI 安装在同一套 oneAPI 环境中，不需要执行会同时修改
+MPI 环境的 `setvars.sh`。可以只把 MKL 根目录交给本项目：
+
+```bash
+cmake -S . -B build-mkl \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPWDFT_ENABLE_BLAS=ON \
+  -DPWDFT_BLAS_ROOT=/opt/intel/oneapi/mkl/latest
+```
+
+也可以精确指定单个 BLAS runtime；该选项优先级最高：
+
+```bash
+cmake -S . -B build-mkl \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPWDFT_ENABLE_BLAS=ON \
+  -DPWDFT_BLAS_LIBRARY=/opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_rt.so
+```
+
+这两个路径选项只用于定位 BLAS，不会写入 `CMAKE_PREFIX_PATH`，也不会改变
+`MPI_CXX_COMPILER`。因此 MPI 构建仍可显式使用原来的编译器，例如
+`-DMPI_CXX_COMPILER=/usr/bin/mpicxx`。GCC OpenMP 与 MKL runtime 混用时建议运行
+前设置：
+
+```bash
+export OMP_NUM_THREADS=10
+export MKL_NUM_THREADS=10
+export MKL_DYNAMIC=FALSE
+export MKL_THREADING_LAYER=GNU
+```
+
+若使用 OpenBLAS，则以 `OPENBLAS_NUM_THREADS=10` 控制 BLAS 线程。外部 BLAS
+只接管 Eigen 支持的动态稠密乘法；矩阵对象、小型本征值求解和其余 C++ 接口仍由
+Eigen 管理。
+
 ### 1.1 下载并检查 NC-UPF
 
 第一阶段建议使用 Quantum ESPRESSO 官方库中的两个文件：
@@ -380,7 +425,10 @@ $$
 H_{\mathrm{sub}}=V^\dagger W,
 $$
 
-但不再在每次 Davidson 迭代中对旧的 $V$ 重复计算 $HV$。厚重启时使用 Ritz 对
+但不再在每次 Davidson 迭代中对旧的 $V$ 重复计算 $HV$。代码还缓存
+$H_{\mathrm{sub}}$：初始子空间完整构造一次，扩展后只新增
+$V_{\mathrm{old}}^\dagger HT$ 与 $T^\dagger HT$，另一半由 Hermitian 对称性填充。
+厚重启时使用 Ritz 对
 
 $$
 X=VA,\qquad HX=WA,
@@ -388,16 +436,17 @@ $$
 
 所以重启本身也不需要额外的 $H\psi$。$V$ 和 $W$ 在每次 Davidson 求解开始时按
 `max_subspace` 一次性分配，后续扩展与厚重启只更新有效列，不再重新分配并复制
-整个长矩阵。修正方向组成块 $T$，先以块矩阵乘法执行两遍
+整个长矩阵。修正方向组成块 $T$，先以块矩阵乘法执行
 
 $$
 T\leftarrow T-V(V^\dagger T),
 $$
 
-再由小 Gram 矩阵 $T^\dagger T$ 做对称正交化并删除线性相关方向。这样保持两遍
-正交化的数值稳定性，同时把大量 BLAS-2 矩阵--向量操作改为 BLAS-3 矩阵--矩阵
-操作。如果没有留下新的线性无关方向，代码就从 $(X,HX)$ 重启，而不是在同一个
-子空间里无限循环。
+再由小 Gram 矩阵 $T^\dagger T$ 做对称正交化并删除线性相关方向。第二遍投影采用
+DGKS 判据：仅当第一遍后至少一个方向的范数下降到原来的 50% 以下时执行。这样
+保留困难修正方向的两遍稳定性，并让已经近似正交的块少做两次长矩阵乘法。如果
+没有留下新的线性无关方向，代码就从 $(X,HX)$ 重启，而不是在同一个子空间里无限
+循环。
 
 默认 SCF 行采用 VASP 风格：
 
@@ -435,6 +484,11 @@ SCF 总时间。平均 block 宽度可由 `N_Hpsi/N_Hblock` 估计。性能汇�
 - `assemble(T)`：保留的兼容计时项；修正方向现已直接构造为块，因此应接近零；
 - `expand/copy`：把新 $(T,HT)$ 写入预分配的 $(V,W)$ 有效列；
 - `unaccounted`：原 `ortho/Ritz/other` 扣除上述细项后的剩余时间。
+
+`Davidson reuse` 还会输出 `VtW full/incremental/Ritz` 和
+`correction reorth/blocks`。前者用于确认完整 $V^\dagger W$ 只在每次 Davidson
+求解开始时构造一次，后续走增量更新或厚重启复用；后者给出 DGKS 实际触发第二遍
+投影的块数。
 
 `unaccounted` 可用于发现尚未单独包住的对象构造、结果复制或日志开销。
 MPI 输出中的 SCF 阶段取最慢 rank，$H\psi$ 与密度内部计时则为 rank 求和；单 rank

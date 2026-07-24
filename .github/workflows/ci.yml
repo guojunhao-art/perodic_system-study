@@ -15,7 +15,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            cmake g++ libeigen3-dev libfftw3-dev libxc-dev \
+            cmake g++ libeigen3-dev libfftw3-dev libxc-dev libopenblas-dev \
             openmpi-bin libopenmpi-dev
 
       - name: Configure serial build
@@ -27,11 +27,37 @@ jobs:
       - name: Run serial tests
         run: ctest --test-dir build --output-on-failure
 
+      - name: Configure explicit BLAS-path build
+        run: |
+          BLAS_LIBRARY="$(find /usr/lib -name 'libopenblas.so' -print -quit)"
+          test -n "${BLAS_LIBRARY}"
+          mkdir -p "${RUNNER_TEMP}/blas-root/lib"
+          ln -s "${BLAS_LIBRARY}" \
+            "${RUNNER_TEMP}/blas-root/lib/libopenblas.so"
+          cmake -S . -B build-blas-root \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPWDFT_ENABLE_BLAS=ON \
+            -DPWDFT_BLAS_ROOT="${RUNNER_TEMP}/blas-root"
+          cmake -S . -B build-blas \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPWDFT_ENABLE_BLAS=ON \
+            -DPWDFT_BLAS_LIBRARY="${BLAS_LIBRARY}"
+
+      - name: Build and test external BLAS path
+        run: |
+          cmake --build build-blas -j2 --target test_davidson
+          ctest --test-dir build-blas \
+            --output-on-failure -R davidson_incremental_hpsi
+
       - name: Configure MPI build
-        run: >-
-          cmake -S . -B build-mpi
-          -DCMAKE_BUILD_TYPE=Release
-          -DPWDFT_ENABLE_MPI=ON
+        run: |
+          BLAS_LIBRARY="$(find /usr/lib -name 'libopenblas.so' -print -quit)"
+          cmake -S . -B build-mpi \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPWDFT_ENABLE_MPI=ON \
+            -DMPI_CXX_COMPILER=/usr/bin/mpicxx \
+            -DPWDFT_ENABLE_BLAS=ON \
+            -DPWDFT_BLAS_LIBRARY="${BLAS_LIBRARY}"
 
       - name: Build MPI targets
         run: cmake --build build-mpi -j2

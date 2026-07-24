@@ -13,10 +13,15 @@ Eigen::MatrixXcd append_columns(
     const Eigen::MatrixXcd& A,
     const std::vector<Eigen::VectorXcd>& new_cols);
 
+struct CorrectionOrthogonalizationInfo {
+    int projection_passes = 0;
+};
+
 Eigen::MatrixXcd orthonormalize_correction_block(
     const Eigen::Ref<const Eigen::MatrixXcd>& subspace,
     const Eigen::Ref<const Eigen::MatrixXcd>& raw_corrections,
-    double drop_tol = 1.0e-14);
+    double drop_tol = 1.0e-14,
+    CorrectionOrthogonalizationInfo* info = nullptr);
 
 struct DavidsonTimingBreakdown {
     double initial_orthonormalization_seconds = 0.0;
@@ -28,6 +33,11 @@ struct DavidsonTimingBreakdown {
     double restart_seconds = 0.0;
     double correction_block_assembly_seconds = 0.0;
     double subspace_expansion_seconds = 0.0;
+    long long projected_matrix_full_builds = 0;
+    long long projected_matrix_incremental_updates = 0;
+    long long projected_matrix_ritz_reuses = 0;
+    long long correction_blocks = 0;
+    long long correction_reorthogonalizations = 0;
 
     void accumulate(const DavidsonTimingBreakdown& other) noexcept {
         initial_orthonormalization_seconds +=
@@ -43,6 +53,15 @@ struct DavidsonTimingBreakdown {
         correction_block_assembly_seconds +=
             other.correction_block_assembly_seconds;
         subspace_expansion_seconds += other.subspace_expansion_seconds;
+        projected_matrix_full_builds +=
+            other.projected_matrix_full_builds;
+        projected_matrix_incremental_updates +=
+            other.projected_matrix_incremental_updates;
+        projected_matrix_ritz_reuses +=
+            other.projected_matrix_ritz_reuses;
+        correction_blocks += other.correction_blocks;
+        correction_reorthogonalizations +=
+            other.correction_reorthogonalizations;
     }
 
     double detailed_other_seconds() const noexcept {

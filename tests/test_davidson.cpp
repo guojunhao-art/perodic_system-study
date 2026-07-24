@@ -86,10 +86,16 @@ void test_block_correction_orthonormalization() {
             raw.cols(),
             29
         );
-    raw.noalias() += subspace * coefficients;
+    raw.noalias() += 20.0 * subspace * coefficients;
 
+    CorrectionOrthogonalizationInfo difficult_info;
     const Eigen::MatrixXcd correction =
-        orthonormalize_correction_block(subspace, raw);
+        orthonormalize_correction_block(
+            subspace,
+            raw,
+            1.0e-14,
+            &difficult_info
+        );
 
     if (correction.cols() != 3) {
         throw std::runtime_error(
@@ -117,6 +123,36 @@ void test_block_correction_orthonormalization() {
         internal_error,
         1.0e-11,
         "block correction internal orthogonality error"
+    );
+    if (difficult_info.projection_passes != 2) {
+        throw std::runtime_error(
+            "DGKS did not reorthogonalize a strongly projected block."
+        );
+    }
+
+    Eigen::MatrixXcd nearly_orthogonal =
+        make_deterministic_matrix(rows, 3, 47);
+    const Eigen::MatrixXcd initial_projection =
+        subspace.adjoint() * nearly_orthogonal;
+    nearly_orthogonal.noalias() -=
+        subspace * initial_projection;
+    CorrectionOrthogonalizationInfo easy_info;
+    const Eigen::MatrixXcd easy_correction =
+        orthonormalize_correction_block(
+            subspace,
+            nearly_orthogonal,
+            1.0e-14,
+            &easy_info
+        );
+    if (easy_info.projection_passes != 1) {
+        throw std::runtime_error(
+            "DGKS unnecessarily reorthogonalized an orthogonal block."
+        );
+    }
+    require_less(
+        (subspace.adjoint() * easy_correction).norm(),
+        1.0e-11,
+        "single-pass correction/subspace orthogonality error"
     );
 }
 
@@ -220,6 +256,15 @@ void test_davidson_against_dense_reference() {
     if (result.hamiltonian_block_calls > result.iterations) {
         throw std::runtime_error(
             "Davidson made more H block calls than iterations."
+        );
+    }
+    if (result.timing.projected_matrix_full_builds != 1 ||
+        result.timing.projected_matrix_incremental_updates <= 0 ||
+        result.timing.correction_blocks <= 0 ||
+        result.timing.correction_reorthogonalizations >
+            result.timing.correction_blocks) {
+        throw std::runtime_error(
+            "Davidson incremental projection counters are inconsistent."
         );
     }
 

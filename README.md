@@ -413,7 +413,21 @@ SCF 总时间。平均 block 宽度可由 `N_Hpsi/N_Hblock` 估计。性能汇�
 - 密度构造：有效轨道数、scatter、反向 FFT 和实空间累加。
 
 其中 `subspace_time` 只统计小矩阵对角化；`ortho/Ritz/other` 是 Davidson 总时间
-扣除 $H\psi$ 和小矩阵对角化后的余量，主要包括正交化、Ritz 矩阵乘法、残差和预处理。
+扣除 $H\psi$ 和小矩阵对角化后的余量。后续两行会进一步报告：
+
+- `initial_ortho`：初始试探子空间的两遍 Gram--Schmidt；
+- `VtW`：构造并数值 Hermitian 化 $H_{\mathrm{sub}}=V^\dagger W$；
+- `Ritz(X/HX)`：两次长矩阵旋转 $X=VA$ 和 $HX=WA$；
+- `residual+prec`：残差构造、范数计算和 Davidson 对角预处理；
+- `result_copy`：把本轮本征值、Ritz 轨道和残差复制到返回结果；
+- `correction_ortho`：修正方向对旧子空间及同批方向的两遍正交化；
+- `restart`：厚重启时用 $(X,HX)$ 替换 $(V,W)$；
+- `assemble(T)`：把通过筛选的修正向量组装为 Hamiltonian 批处理块；
+- `expand/copy`：重新分配并扩展、复制 $(V,W)$；
+- `unaccounted`：原 `ortho/Ritz/other` 扣除上述细项后的剩余时间。
+
+这些细项只增加累计墙钟计时，不改变 Davidson 数值路径。`unaccounted` 可用于发现
+尚未单独包住的对象构造、结果复制或日志开销。
 MPI 输出中的 SCF 阶段取最慢 rank，$H\psi$ 与密度内部计时则为 rank 求和；单 rank
 计算时二者都是普通墙钟时间。
 `h2_opt` 的每个几何点也会显示 `N_Hpsi`、`N_Hblock`、$H\psi$ 耗时与 SCF 耗时。
@@ -733,6 +747,8 @@ $F_z=\mp0.04904463$ Ha/Bohr。这里 $M=-2\ \mu_B$ 与
 $M=+2\ \mu_B$ 通过全局自旋翻转相连；无外磁场时二者物理等价，也说明
 `starting_magnetization` 只是初猜而不是约束。该结果目前是程序内参考值，仍需
 使用相同赝势、截断能、超胞和 FFT 网格与 Quantum ESPRESSO 交叉验证。
+该示例采用 `mixing_alpha = 0.30` 作为后续性能基线；`0.10` 的测试出现明显能量
+振荡并需要 141 轮 SCF，因此比较代码优化前后性能时应保持 `0.30` 不变。
 
 其中 $\sigma=k_BT$。令 $p_n=f_n/2$，无量纲电子熵是
 

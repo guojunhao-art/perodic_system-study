@@ -9,6 +9,18 @@
 #include <limits>
 #include <stdexcept>
 
+namespace {
+
+double elapsed_seconds(
+    std::chrono::steady_clock::time_point start) {
+
+    return std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - start
+    ).count();
+}
+
+} // namespace
+
 Eigen::MatrixXcd orthonormalize_columns(
     const Eigen::MatrixXcd& A,
     double drop_tol) {
@@ -134,7 +146,10 @@ DavidsonResult davidson_lowest_eigenstates(
     DavidsonResult result;
     const auto davidson_start = std::chrono::steady_clock::now();
 
+    auto phase_start = std::chrono::steady_clock::now();
     Eigen::MatrixXcd V = orthonormalize_columns(initial_trials);
+    result.timing.initial_orthonormalization_seconds +=
+        elapsed_seconds(phase_start);
 
     if (V.cols() < nbands) {
         throw std::runtime_error(
@@ -180,6 +195,7 @@ DavidsonResult davidson_lowest_eigenstates(
         result.iterations = iter + 1;
         result.final_subspace_size = V.cols();
 
+        phase_start = std::chrono::steady_clock::now();
         /*
          * 1. H_sub = V† H V = V† W
          */
@@ -192,6 +208,8 @@ DavidsonResult davidson_lowest_eigenstates(
          * This removes tiny roundoff asymmetry.
          */
         Hsub = 0.5 * (Hsub + Hsub.adjoint());
+        result.timing.projected_matrix_seconds +=
+            elapsed_seconds(phase_start);
 
         /*
          * 2. Diagonalize subspace Hamiltonian.
@@ -222,14 +240,18 @@ DavidsonResult davidson_lowest_eigenstates(
          *    X  = V A
          *    HX = W A
          */
+        phase_start = std::chrono::steady_clock::now();
         Eigen::MatrixXcd X = V * A;
         Eigen::MatrixXcd HX = W * A;
+        result.timing.ritz_rotation_seconds +=
+            elapsed_seconds(phase_start);
 
         /*
          * 4. Residuals:
          *
          *    r_i = Hx_i - eps_i x_i
          */
+        phase_start = std::chrono::steady_clock::now();
         std::vector<double> residual_norms(nbands, 0.0);
         std::vector<Eigen::VectorXcd> correction_vectors;
 
@@ -276,12 +298,17 @@ DavidsonResult davidson_lowest_eigenstates(
                 correction_vectors.push_back(t);
             }
         }
+        result.timing.residual_preconditioner_seconds +=
+            elapsed_seconds(phase_start);
 
+        phase_start = std::chrono::steady_clock::now();
         result.eigenvalues = eps;
         result.eigenvectors = X;
         result.residual_norms = residual_norms;
         result.converged = all_converged;
         result.max_residual_band = maximum_residual_band;
+        result.timing.result_copy_seconds +=
+            elapsed_seconds(phase_start);
 
         if (verbose) {
             std::cout << "Davidson iter " << std::setw(3) << iter + 1
@@ -305,6 +332,7 @@ DavidsonResult davidson_lowest_eigenstates(
          * deciding whether the subspace needs a restart. Two passes suppress
          * loss of orthogonality for nearly converged vectors.
          */
+        phase_start = std::chrono::steady_clock::now();
         std::vector<Eigen::VectorXcd> accepted;
         accepted.reserve(correction_vectors.size());
         for (const Eigen::VectorXcd& t_raw : correction_vectors) {
@@ -322,6 +350,8 @@ DavidsonResult davidson_lowest_eigenstates(
                 accepted.push_back(t / nrm);
             }
         }
+        result.timing.correction_orthogonalization_seconds +=
+            elapsed_seconds(phase_start);
 
         /*
          * If every raw correction was removed by orthogonalization, the old
@@ -342,8 +372,11 @@ DavidsonResult davidson_lowest_eigenstates(
                 : unsuccessful_empty_restarts + 1;
             residual_at_last_empty_restart = maximum_residual;
 
+            phase_start = std::chrono::steady_clock::now();
             V = X;
             W = HX;
+            result.timing.restart_seconds +=
+                elapsed_seconds(phase_start);
             result.final_subspace_size = V.cols();
 
             if (unsuccessful_empty_restarts
@@ -362,8 +395,11 @@ DavidsonResult davidson_lowest_eigenstates(
          * so no new H application is required by the restart itself.
          */
         if (V.cols() + static_cast<int>(accepted.size()) > max_subspace) {
+            phase_start = std::chrono::steady_clock::now();
             V = X;
             W = HX;
+            result.timing.restart_seconds +=
+                elapsed_seconds(phase_start);
             result.subspace_restarts += 1;
             result.final_subspace_size = V.cols();
             continue;
@@ -373,11 +409,17 @@ DavidsonResult davidson_lowest_eigenstates(
          * 8. Apply H only to genuinely new orthonormal directions, then
          * append the matching (V, HV) column blocks.
          */
+        phase_start = std::chrono::steady_clock::now();
         Eigen::MatrixXcd T(nbasis, static_cast<int>(accepted.size()));
         for (int j = 0; j < static_cast<int>(accepted.size()); ++j) {
             T.col(j) = accepted[j];
         }
+        result.timing.correction_block_assembly_seconds +=
+            elapsed_seconds(phase_start);
+
         const Eigen::MatrixXcd HT = apply_hamiltonian_counted(T);
+
+        phase_start = std::chrono::steady_clock::now();
         V = append_columns(V, accepted);
 
         std::vector<Eigen::VectorXcd> haccepted;
@@ -386,6 +428,8 @@ DavidsonResult davidson_lowest_eigenstates(
             haccepted.push_back(HT.col(j));
         }
         W = append_columns(W, haccepted);
+        result.timing.subspace_expansion_seconds +=
+            elapsed_seconds(phase_start);
         result.final_subspace_size = V.cols();
     }
 

@@ -13,6 +13,46 @@ Eigen::MatrixXcd append_columns(
     const Eigen::MatrixXcd& A,
     const std::vector<Eigen::VectorXcd>& new_cols);
 
+struct DavidsonTimingBreakdown {
+    double initial_orthonormalization_seconds = 0.0;
+    double projected_matrix_seconds = 0.0;
+    double ritz_rotation_seconds = 0.0;
+    double residual_preconditioner_seconds = 0.0;
+    double result_copy_seconds = 0.0;
+    double correction_orthogonalization_seconds = 0.0;
+    double restart_seconds = 0.0;
+    double correction_block_assembly_seconds = 0.0;
+    double subspace_expansion_seconds = 0.0;
+
+    void accumulate(const DavidsonTimingBreakdown& other) noexcept {
+        initial_orthonormalization_seconds +=
+            other.initial_orthonormalization_seconds;
+        projected_matrix_seconds += other.projected_matrix_seconds;
+        ritz_rotation_seconds += other.ritz_rotation_seconds;
+        residual_preconditioner_seconds +=
+            other.residual_preconditioner_seconds;
+        result_copy_seconds += other.result_copy_seconds;
+        correction_orthogonalization_seconds +=
+            other.correction_orthogonalization_seconds;
+        restart_seconds += other.restart_seconds;
+        correction_block_assembly_seconds +=
+            other.correction_block_assembly_seconds;
+        subspace_expansion_seconds += other.subspace_expansion_seconds;
+    }
+
+    double detailed_other_seconds() const noexcept {
+        return initial_orthonormalization_seconds
+            + projected_matrix_seconds
+            + ritz_rotation_seconds
+            + residual_preconditioner_seconds
+            + result_copy_seconds
+            + correction_orthogonalization_seconds
+            + restart_seconds
+            + correction_block_assembly_seconds
+            + subspace_expansion_seconds;
+    }
+};
+
 struct DavidsonResult {
     Eigen::VectorXd eigenvalues;
     Eigen::MatrixXcd eigenvectors;
@@ -28,6 +68,7 @@ struct DavidsonResult {
     double subspace_diagonalization_seconds = 0.0;
     double total_seconds = 0.0;
     double projected_hermiticity_error = 0.0;
+    DavidsonTimingBreakdown timing;
     bool converged = false;
     bool stagnated = false;
 };

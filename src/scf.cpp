@@ -180,6 +180,13 @@ void print_compact_summary(
         0.0,
         result.eigensolver_hamiltonian_seconds - hpsi_accounted
     );
+    const DavidsonTimingBreakdown& davidson =
+        result.eigensolver_detail;
+    const double davidson_unaccounted = std::max(
+        0.0,
+        result.eigensolver_other_seconds
+            - davidson.detailed_other_seconds()
+    );
 
     out << "--------------------------------------------------------------------------------\n"
         << " " << std::setw(4) << result.iterations
@@ -200,6 +207,22 @@ void print_compact_summary(
         << result.eigensolver_subspace_seconds << " s"
         << "  ortho/Ritz/other = "
         << result.eigensolver_other_seconds << " s\n"
+        << "  Davidson breakdown: initial_ortho = "
+        << davidson.initial_orthonormalization_seconds
+        << "  VtW = " << davidson.projected_matrix_seconds
+        << "  Ritz(X/HX) = " << davidson.ritz_rotation_seconds
+        << "  residual+prec = "
+        << davidson.residual_preconditioner_seconds
+        << "  result_copy = " << davidson.result_copy_seconds
+        << "  correction_ortho = "
+        << davidson.correction_orthogonalization_seconds << " s\n"
+        << "  Davidson update: restart = "
+        << davidson.restart_seconds
+        << "  assemble(T) = "
+        << davidson.correction_block_assembly_seconds
+        << "  expand/copy = "
+        << davidson.subspace_expansion_seconds
+        << "  unaccounted = " << davidson_unaccounted << " s\n"
         << "  SCF wall time = " << result.wall_time_seconds << " s\n"
         << "  phase wall time: V_in = "
         << result.performance.input_potential_seconds
@@ -377,6 +400,7 @@ SCFResult run_scf(
             ks.total_seconds - ks.hamiltonian_seconds
                 - ks.subspace_diagonalization_seconds
         );
+        result.eigensolver_detail.accumulate(ks.timing);
 
         phase_start = std::chrono::steady_clock::now();
         const OccupationResult occupations = compute_occupations(

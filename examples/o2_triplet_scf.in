@@ -27,7 +27,10 @@ energy_tolerance_ha = 1.0e-6
 eigensolver_max_iterations = 100
 eigensolver_initial_tolerance_ha = 1.0e-7
 eigensolver_tolerance_ha = 2.0e-10
-mixing_alpha = 0.10
+# For this O2 cell, alpha = 0.10 produces strong energy oscillations and
+# required 141 SCF iterations in the reference run. Alpha = 0.30 is the
+# stable performance baseline used for Davidson profiling.
+mixing_alpha = 0.30
 pulay_max_history = 8
 pulay_min_history = 2
 pulay_regularization = 1.0e-12

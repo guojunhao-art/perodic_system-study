@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core.hpp"
+#include "eigensolver.hpp"
 #include "scf_modules.hpp"
 #include "xc_functional.hpp"
 
@@ -102,6 +103,7 @@ struct SCFResult {
     double eigensolver_hamiltonian_seconds = 0.0;
     double eigensolver_subspace_seconds = 0.0;
     double eigensolver_other_seconds = 0.0;
+    DavidsonTimingBreakdown eigensolver_detail;
     double wall_time_seconds = 0.0;
     SCFPerformanceBreakdown performance;
 
@@ -162,6 +164,7 @@ struct KPointSCFResult {
     double eigensolver_hamiltonian_seconds = 0.0;
     double eigensolver_subspace_seconds = 0.0;
     double eigensolver_other_seconds = 0.0;
+    DavidsonTimingBreakdown eigensolver_detail;
     double wall_time_seconds = 0.0;
     SCFPerformanceBreakdown performance;
 

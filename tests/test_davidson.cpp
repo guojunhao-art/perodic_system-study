@@ -147,6 +147,28 @@ void test_davidson_against_dense_reference() {
             "Davidson made more H block calls than iterations."
         );
     }
+
+    const DavidsonTimingBreakdown& timing = result.timing;
+    const double detailed_other = timing.detailed_other_seconds();
+    const double total_other =
+        result.total_seconds
+        - result.hamiltonian_seconds
+        - result.subspace_diagonalization_seconds;
+    if (timing.initial_orthonormalization_seconds < 0.0 ||
+        timing.projected_matrix_seconds < 0.0 ||
+        timing.ritz_rotation_seconds < 0.0 ||
+        timing.residual_preconditioner_seconds < 0.0 ||
+        timing.result_copy_seconds < 0.0 ||
+        timing.correction_orthogonalization_seconds < 0.0 ||
+        timing.restart_seconds < 0.0 ||
+        timing.correction_block_assembly_seconds < 0.0 ||
+        timing.subspace_expansion_seconds < 0.0 ||
+        detailed_other <= 0.0 ||
+        detailed_other > total_other + 1.0e-9) {
+        throw std::runtime_error(
+            "Davidson detailed timing is incomplete or double-counted."
+        );
+    }
 }
 
 } // namespace

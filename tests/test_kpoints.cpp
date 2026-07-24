@@ -422,7 +422,10 @@ void test_two_kpoint_scf() {
         result.performance.fft.hamiltonian_block_calls !=
             result.eigensolver_hamiltonian_block_calls ||
         result.performance.fft.hamiltonian_backward_fft_seconds <= 0.0 ||
-        result.performance.fft.density_orbitals <= 0) {
+        result.performance.fft.density_orbitals <= 0 ||
+        result.eigensolver_detail.detailed_other_seconds() <= 0.0 ||
+        result.eigensolver_detail.detailed_other_seconds() >
+            result.eigensolver_other_seconds + 1.0e-9) {
         throw std::runtime_error(
             "SCF performance counters are incomplete or inconsistent."
         );
@@ -434,7 +437,9 @@ void test_two_kpoint_scf() {
             output.find("rms(c)") == std::string::npos ||
             output.find("DAV:") == std::string::npos ||
             output.find("Hpsi breakdown") == std::string::npos ||
-            output.find("ortho/Ritz/other") == std::string::npos) {
+            output.find("ortho/Ritz/other") == std::string::npos ||
+            output.find("Davidson breakdown") == std::string::npos ||
+            output.find("unaccounted") == std::string::npos) {
             throw std::runtime_error(
                 "VASP-style DAV diagnostics are incomplete."
             );

@@ -64,6 +64,35 @@ FFTPerformanceCounters sum_fft_performance(
     return total;
 }
 
+DavidsonTimingBreakdown sum_davidson_timing(
+    const DavidsonTimingBreakdown& local) {
+
+    std::vector<double> values{
+        local.initial_orthonormalization_seconds,
+        local.projected_matrix_seconds,
+        local.ritz_rotation_seconds,
+        local.residual_preconditioner_seconds,
+        local.result_copy_seconds,
+        local.correction_orthogonalization_seconds,
+        local.restart_seconds,
+        local.correction_block_assembly_seconds,
+        local.subspace_expansion_seconds
+    };
+    parallel::sum_in_place(values);
+
+    DavidsonTimingBreakdown total;
+    total.initial_orthonormalization_seconds = values[0];
+    total.projected_matrix_seconds = values[1];
+    total.ritz_rotation_seconds = values[2];
+    total.residual_preconditioner_seconds = values[3];
+    total.result_copy_seconds = values[4];
+    total.correction_orthogonalization_seconds = values[5];
+    total.restart_seconds = values[6];
+    total.correction_block_assembly_seconds = values[7];
+    total.subspace_expansion_seconds = values[8];
+    return total;
+}
+
 SCFPerformanceBreakdown reduce_performance(
     const SCFPerformanceBreakdown& local) {
 
@@ -343,6 +372,13 @@ void print_summary(
         0.0,
         result.eigensolver_hamiltonian_seconds - hpsi_accounted
     );
+    const DavidsonTimingBreakdown& davidson =
+        result.eigensolver_detail;
+    const double davidson_unaccounted = std::max(
+        0.0,
+        result.eigensolver_other_seconds
+            - davidson.detailed_other_seconds()
+    );
     out << "--------------------------------------------------------------------------------\n"
         << " " << std::setw(4) << result.iterations
         << " F= " << std::scientific << std::setprecision(12)
@@ -376,6 +412,25 @@ void print_summary(
         << (parallel::size() > 1 ? "(rank-sum)" : "")
         << " = "
         << result.eigensolver_other_seconds << " s\n"
+        << "  Davidson breakdown"
+        << (parallel::size() > 1 ? "(rank-sum)" : "")
+        << ": initial_ortho = "
+        << davidson.initial_orthonormalization_seconds
+        << "  VtW = " << davidson.projected_matrix_seconds
+        << "  Ritz(X/HX) = " << davidson.ritz_rotation_seconds
+        << "  residual+prec = "
+        << davidson.residual_preconditioner_seconds
+        << "  result_copy = " << davidson.result_copy_seconds
+        << "  correction_ortho = "
+        << davidson.correction_orthogonalization_seconds << " s\n"
+        << "  Davidson update"
+        << (parallel::size() > 1 ? "(rank-sum)" : "")
+        << ": restart = " << davidson.restart_seconds
+        << "  assemble(T) = "
+        << davidson.correction_block_assembly_seconds
+        << "  expand/copy = "
+        << davidson.subspace_expansion_seconds
+        << "  unaccounted = " << davidson_unaccounted << " s\n"
         << "  SCF wall time"
         << (parallel::size() > 1 ? "(max-rank)" : "")
         << " = "
@@ -603,6 +658,7 @@ KPointSCFResult run_kpoint_scf(
         double local_hamiltonian_seconds = 0.0;
         double local_subspace_seconds = 0.0;
         double local_eigensolver_other_seconds = 0.0;
+        DavidsonTimingBreakdown local_eigensolver_detail;
         double local_maximum_residual = 0.0;
         double local_residual_square_sum = 0.0;
         int local_residual_count = 0;
@@ -686,6 +742,9 @@ KPointSCFResult run_kpoint_scf(
                             - solution.hamiltonian_seconds
                             - solution.subspace_diagonalization_seconds
                     );
+                    local_eigensolver_detail.accumulate(
+                        solution.timing
+                    );
                     local_maximum_residual = std::max(
                         local_maximum_residual, residual
                     );
@@ -728,6 +787,8 @@ KPointSCFResult run_kpoint_scf(
             parallel::sum(local_subspace_seconds);
         const double iteration_eigensolver_other_seconds =
             parallel::sum(local_eigensolver_other_seconds);
+        const DavidsonTimingBreakdown iteration_eigensolver_detail =
+            sum_davidson_timing(local_eigensolver_detail);
         const double iteration_maximum_residual =
             parallel::maximum(local_maximum_residual);
         const double iteration_residual_square_sum =
@@ -753,6 +814,9 @@ KPointSCFResult run_kpoint_scf(
         result.eigensolver_subspace_seconds += iteration_subspace_seconds;
         result.eigensolver_other_seconds +=
             iteration_eigensolver_other_seconds;
+        result.eigensolver_detail.accumulate(
+            iteration_eigensolver_detail
+        );
 
         phase_start = std::chrono::steady_clock::now();
         std::vector<double> packed_eigenvalues(

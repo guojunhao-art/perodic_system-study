@@ -1,5 +1,6 @@
 #include "calculation.hpp"
 
+#include "bands.hpp"
 #include "ewald.hpp"
 #include "parallel.hpp"
 #include "upf_local_potential.hpp"
@@ -81,6 +82,25 @@ int next_fft_friendly_even_size(int minimum_size) {
         candidate += 2;
     }
     return candidate;
+}
+
+std::array<int, 3> fft_grid_dimensions_from_required_frequency(
+    const Eigen::Vector3i& required_frequency) {
+
+    std::array<int, 3> dimensions{};
+    for (int direction = 0; direction < 3; ++direction) {
+        if (required_frequency[direction] >
+            (std::numeric_limits<int>::max() - 2) / 2) {
+            throw std::runtime_error(
+                "Automatic FFT grid dimension exceeds integer range."
+            );
+        }
+        const int minimum_size =
+            2 * required_frequency[direction] + 2;
+        dimensions[direction] =
+            next_fft_friendly_even_size(minimum_size);
+    }
+    return dimensions;
 }
 
 void require_fft_grid_for_basis_products(
@@ -174,20 +194,9 @@ std::array<int, 3> automatic_fft_grid_dimensions(
         );
     }
 
-    std::array<int, 3> dimensions{};
-    for (int direction = 0; direction < 3; ++direction) {
-        if (required_frequency[direction] >
-            (std::numeric_limits<int>::max() - 2) / 2) {
-            throw std::runtime_error(
-                "Automatic FFT grid dimension exceeds integer range."
-            );
-        }
-        const int minimum_size =
-            2 * required_frequency[direction] + 2;
-        dimensions[direction] =
-            next_fft_friendly_even_size(minimum_size);
-    }
-    return dimensions;
+    return fft_grid_dimensions_from_required_frequency(
+        required_frequency
+    );
 }
 
 SinglePointResult run_single_point(
@@ -389,8 +398,35 @@ SinglePointResult run_single_point(
 
     std::array<int, 3> fft_dimensions = config.fft_grid;
     if (automatic_fft_grid) {
+        Eigen::Vector3i required_frequency = Eigen::Vector3i::Zero();
+        for (const KPointHamiltonian& point : kpoint_hamiltonians) {
+            required_frequency = required_frequency.cwiseMax(
+                maximum_required_fft_frequency(point.basis)
+            );
+        }
+        const bool requests_bands =
+            config.calculation == CalculationType::Bands
+            || config.calculation == CalculationType::RelaxBands;
+        if (requests_bands) {
+            const auto path = interpolate_band_path(
+                lattice, config.bands
+            );
+            PlaneWaveBasis3D path_basis;
+            for (const BandPathSample& sample : path) {
+                path_basis.generate(
+                    lattice,
+                    lattice.B * sample.frac_position,
+                    ecut_hartree
+                );
+                required_frequency = required_frequency.cwiseMax(
+                    maximum_required_fft_frequency(path_basis)
+                );
+            }
+        }
         fft_dimensions =
-            automatic_fft_grid_dimensions(kpoint_hamiltonians);
+            fft_grid_dimensions_from_required_frequency(
+                required_frequency
+            );
     }
     const FFTGrid grid(
         fft_dimensions[0],
@@ -399,6 +435,23 @@ SinglePointResult run_single_point(
     );
     for (const KPointHamiltonian& point : kpoint_hamiltonians) {
         require_fft_grid_for_basis_products(point.basis, grid);
+    }
+    const bool requests_bands =
+        config.calculation == CalculationType::Bands
+        || config.calculation == CalculationType::RelaxBands;
+    if (requests_bands) {
+        const auto path = interpolate_band_path(
+            lattice, config.bands
+        );
+        PlaneWaveBasis3D path_basis;
+        for (const BandPathSample& sample : path) {
+            path_basis.generate(
+                lattice,
+                lattice.B * sample.frac_position,
+                ecut_hartree
+            );
+            require_fft_grid_for_basis_products(path_basis, grid);
+        }
     }
     FFTWorkspace fft(grid, config.fft_threads);
     setup_performance.basis_and_fft_seconds =

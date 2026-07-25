@@ -9,6 +9,7 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -486,9 +487,13 @@ CalculationConfig read_calculation_config(const std::string& path) {
                 config.calculation = CalculationType::SCF;
             } else if (calculation == "relax") {
                 config.calculation = CalculationType::Relax;
+            } else if (calculation == "bands") {
+                config.calculation = CalculationType::Bands;
+            } else if (calculation == "relax_bands") {
+                config.calculation = CalculationType::RelaxBands;
             } else {
                 throw std::runtime_error(
-                    "calculation must be scf or relax."
+                    "calculation must be scf, relax, bands, or relax_bands."
                 );
             }
         } else if (key == "structure") {
@@ -648,6 +653,28 @@ CalculationConfig read_calculation_config(const std::string& path) {
         } else if (key == "trajectory") {
             config.relaxation.trajectory_path =
                 lowercase(value) == "none" ? "" : value;
+        } else if (key == "band_point") {
+            const auto fields = tokens(value);
+            if (fields.size() != 4) {
+                throw std::runtime_error(
+                    "band_point requires a label followed by three "
+                    "reciprocal fractional coordinates."
+                );
+            }
+            BandPathNode node;
+            node.label = fields[0];
+            for (int direction = 0; direction < 3; ++direction) {
+                node.frac_position[direction] = parse_double(
+                    fields[direction + 1], "band_point"
+                );
+            }
+            config.bands.path.push_back(std::move(node));
+        } else if (key == "band_points_per_segment" ||
+                   key == "bands_points_per_segment") {
+            config.bands.points_per_segment =
+                parse_integer(value, key);
+        } else if (key == "bands_output") {
+            config.bands.output_path = value;
         } else if (key == "kpoints") {
             const auto fields = tokens(lowercase(value));
             if (fields.size() == 1 && fields[0] == "gamma") {
@@ -796,6 +823,25 @@ CalculationConfig read_calculation_config(const std::string& path) {
     }
     if (config.relaxation.max_backtracks < 0) {
         throw std::runtime_error("max_backtracks cannot be negative.");
+    }
+    if (config.bands.points_per_segment < 2) {
+        throw std::runtime_error(
+            "band_points_per_segment must be at least 2."
+        );
+    }
+    const bool requests_bands =
+        config.calculation == CalculationType::Bands
+        || config.calculation == CalculationType::RelaxBands;
+    if (requests_bands && config.bands.path.size() < 2) {
+        throw std::runtime_error(
+            "calculation = bands or relax_bands requires at least two "
+            "band_point lines."
+        );
+    }
+    if (requests_bands && trim(config.bands.output_path).empty()) {
+        throw std::runtime_error(
+            "bands_output cannot be empty for a band calculation."
+        );
     }
     require_positive(
         config.relaxation.force_tolerance_ha_bohr,

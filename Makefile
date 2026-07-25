@@ -54,6 +54,9 @@ test_batched_hamiltonian: $(CORE_SRC) tests/test_batched_hamiltonian.cpp
 test_relaxation: $(CORE_SRC) tests/test_relaxation.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
+test_bands: $(CORE_SRC) tests/test_bands.cpp
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+
 test_radial_transform: src/radial_transform.cpp tests/test_radial_transform.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@
 
@@ -81,7 +84,7 @@ h2_opt: $(CORE_SRC) app/h2_opt.cpp
 si2_force_check: $(CORE_SRC) app/si2_force_check.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
-test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_kpoints test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation
+test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_kpoints test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands
 	./test_forces
 	./test_scf_force_fd
 	./test_radial_transform
@@ -95,6 +98,7 @@ test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_i
 	./test_davidson
 	./test_batched_hamiltonian
 	./test_relaxation
+	./test_bands
 
 clean:
-	rm -f fft pwdft pwdft_mpi upf_info h2_opt si2_force_check test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_kpoints test_kpoints_mpi test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation
+	rm -f fft pwdft pwdft_mpi upf_info h2_opt si2_force_check test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_kpoints test_kpoints_mpi test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands

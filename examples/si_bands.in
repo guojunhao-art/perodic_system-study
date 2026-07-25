@@ -1,0 +1,31 @@
+calculation = bands
+structure = POSCAR_Si_diamond
+pseudo = Si ../pseudopotentials/Si.pz-vbc.UPF
+xc = pz_lda
+
+# This uniform mesh determines the self-consistent density.
+kpoints = gamma 6 6 6
+ecut_ha = auto
+fft_grid = auto
+fft_threads = auto
+nelect = auto
+nbands = 8
+nspin = 1
+occupations = zero_t
+
+scf_max_iterations = 150
+energy_tolerance_ha = 1.0e-7
+eigensolver_initial_tolerance_ha = 1.0e-7
+eigensolver_tolerance_ha = 2.0e-10
+mixing_alpha = 0.15
+verbosity = compact
+
+# FCC high-symmetry coordinates in the primitive reciprocal basis.
+band_points_per_segment = 20
+band_point = G 0.000 0.000 0.000
+band_point = X 0.500 0.000 0.500
+band_point = W 0.500 0.250 0.750
+band_point = K 0.375 0.375 0.750
+band_point = G 0.000 0.000 0.000
+band_point = L 0.500 0.500 0.500
+bands_output = si_bands.dat

@@ -3,6 +3,7 @@
 #include "bands.hpp"
 #include "ewald.hpp"
 #include "parallel.hpp"
+#include "symmetry.hpp"
 #include "upf_local_potential.hpp"
 #include "upf_nonlocal.hpp"
 #include "upf_reader.hpp"
@@ -133,6 +134,48 @@ double maximum_force_component(
     return maximum;
 }
 
+bool equivalent_fractional_kpoint(
+    const Eigen::Vector3d& first,
+    const Eigen::Vector3d& second) {
+
+    const Eigen::Vector3d difference = first - second;
+    return (
+        difference.array() - difference.array().round()
+    ).abs().maxCoeff() <= 1.0e-10;
+}
+
+KPointSCFInitialGuess compatible_initial_guess(
+    const KPointSCFInitialGuess& initial_guess,
+    const KPointSet& kpoints,
+    int nspin) {
+
+    KPointSCFInitialGuess result = initial_guess;
+    if (result.orbitals.empty()) {
+        return result;
+    }
+    bool compatible =
+        result.orbitals.size()
+        == static_cast<std::size_t>(nspin) * kpoints.points.size();
+    if (compatible && !result.orbital_kpoints.empty()) {
+        compatible =
+            result.orbital_kpoints.size() == kpoints.points.size();
+        for (int point = 0;
+             compatible &&
+             point < static_cast<int>(kpoints.points.size());
+             ++point) {
+            compatible = equivalent_fractional_kpoint(
+                result.orbital_kpoints[point],
+                kpoints.points[point].frac_position
+            );
+        }
+    }
+    if (!compatible) {
+        result.orbitals.clear();
+        result.orbital_kpoints.clear();
+    }
+    return result;
+}
+
 void print_setup_performance(
     std::ostream& out,
     const SetupPerformanceBreakdown& timing) {
@@ -218,6 +261,22 @@ SinglePointResult run_single_point(
         structure.lattice_bohr.col(1),
         structure.lattice_bohr.col(2)
     );
+
+    KPointReductionResult kpoint_reduction;
+    if (config.kpoint_symmetry.enabled) {
+        kpoint_reduction = reduce_kpoints_by_symmetry(
+            structure,
+            config.kpoints,
+            config.kpoint_symmetry.tolerance_angstrom,
+            config.kpoint_symmetry.include_time_reversal
+        );
+    } else {
+        kpoint_reduction.irreducible_kpoints = config.kpoints;
+        kpoint_reduction.full_kpoint_count =
+            static_cast<int>(config.kpoints.points.size());
+    }
+    const KPointSet& scf_kpoints =
+        kpoint_reduction.irreducible_kpoints;
 
     SetupPerformanceBreakdown setup_performance;
     const auto setup_start = PerformanceClock::now();
@@ -348,14 +407,14 @@ SinglePointResult run_single_point(
 
     phase_start = PerformanceClock::now();
     std::vector<KPointHamiltonian> kpoint_hamiltonians;
-    kpoint_hamiltonians.reserve(config.kpoints.points.size());
+    kpoint_hamiltonians.reserve(scf_kpoints.points.size());
     int minimum_plane_wave_count = 0;
     int maximum_plane_wave_count = 0;
     int expanded_projector_count = 0;
     for (int ik = 0;
-         ik < static_cast<int>(config.kpoints.points.size());
+         ik < static_cast<int>(scf_kpoints.points.size());
          ++ik) {
-        const KPoint& input_point = config.kpoints.points[ik];
+        const KPoint& input_point = scf_kpoints.points[ik];
         KPointHamiltonian point;
         point.fractional_position = input_point.frac_position;
         point.weight = input_point.weight;
@@ -404,6 +463,24 @@ SinglePointResult run_single_point(
                 maximum_required_fft_frequency(point.basis)
             );
         }
+        /*
+         * The irreducible representatives are the only Hamiltonians solved,
+         * but the FFT box must still cover plane-wave products at every
+         * member of every reconstructed star.
+         */
+        if (kpoint_reduction.reduction_applied) {
+            PlaneWaveBasis3D full_mesh_basis;
+            for (const KPoint& point : config.kpoints.points) {
+                full_mesh_basis.generate(
+                    lattice,
+                    lattice.B * point.frac_position,
+                    ecut_hartree
+                );
+                required_frequency = required_frequency.cwiseMax(
+                    maximum_required_fft_frequency(full_mesh_basis)
+                );
+            }
+        }
         const bool requests_bands =
             config.calculation == CalculationType::Bands
             || config.calculation == CalculationType::RelaxBands;
@@ -427,6 +504,10 @@ SinglePointResult run_single_point(
             fft_grid_dimensions_from_required_frequency(
                 required_frequency
             );
+        fft_dimensions = symmetry_compatible_fft_dimensions(
+            fft_dimensions,
+            kpoint_reduction.mesh_compatible_operations
+        );
     }
     const FFTGrid grid(
         fft_dimensions[0],
@@ -479,8 +560,17 @@ SinglePointResult run_single_point(
             << (automatic_fft_grid ? "automatic" : "explicit")
             << "    FFT threads = " << fft.thread_count << "\n"
             << "  KPOINTS = " << config.kpoints.description
-            << "    NKPTS = " << config.kpoints.points.size()
+            << "    NKPTS(full/irreducible) = "
+            << kpoint_reduction.full_kpoint_count << "/"
+            << scf_kpoints.points.size()
             << "    NPROJ(radial) = " << radial_projector_count << "\n"
+            << "  SYMMETRY operations(total/mesh) = "
+            << kpoint_reduction.space_group_operations.size()
+            << "/"
+            << kpoint_reduction.mesh_compatible_operations.size()
+            << "    time reversal = "
+            << (kpoint_reduction.time_reversal_used ? "on" : "off")
+            << "\n"
             << "  EDIFF  = " << options.energy_tolerance
             << " Ha (applied to |dE| and |d eps|)\n"
             << "  DAV density reference = "
@@ -564,6 +654,10 @@ SinglePointResult run_single_point(
         print_setup_performance(*log_stream, setup_performance);
     }
 
+    const KPointSCFInitialGuess scf_initial_guess =
+        compatible_initial_guess(
+            initial_guess, scf_kpoints, options.nspin
+        );
     KPointSCFResult scf = run_kpoint_scf(
         lattice,
         kpoint_hamiltonians,
@@ -571,8 +665,9 @@ SinglePointResult run_single_point(
         local_potential,
         ewald.total,
         options,
-        initial_guess,
-        log_stream
+        scf_initial_guess,
+        log_stream,
+        kpoint_reduction.mesh_compatible_operations
     );
 
     ForcePerformanceBreakdown force_performance;
@@ -683,6 +778,22 @@ SinglePointResult run_single_point(
     force_performance.mpi_reduction_seconds =
         elapsed_seconds(phase_start);
 
+    symmetrize_atomic_vectors(
+        structure,
+        kpoint_reduction.mesh_compatible_operations,
+        forces.local
+    );
+    symmetrize_atomic_vectors(
+        structure,
+        kpoint_reduction.mesh_compatible_operations,
+        forces.ion_ion
+    );
+    symmetrize_atomic_vectors(
+        structure,
+        kpoint_reduction.mesh_compatible_operations,
+        forces.nonlocal
+    );
+
     forces.total.resize(structure.atoms.size(), Eigen::Vector3d::Zero());
     for (int iatom = 0;
          iatom < static_cast<int>(structure.atoms.size());
@@ -705,6 +816,19 @@ SinglePointResult run_single_point(
     result.plane_wave_count = maximum_plane_wave_count;
     result.radial_projector_count = radial_projector_count;
     result.expanded_projector_count = expanded_projector_count;
+    result.full_kpoint_count = kpoint_reduction.full_kpoint_count;
+    result.irreducible_kpoint_count =
+        static_cast<int>(scf_kpoints.points.size());
+    result.space_group_operation_count =
+        static_cast<int>(
+            kpoint_reduction.space_group_operations.size()
+        );
+    result.mesh_symmetry_operation_count =
+        static_cast<int>(
+            kpoint_reduction.mesh_compatible_operations.size()
+        );
+    result.kpoint_time_reversal_used =
+        kpoint_reduction.time_reversal_used;
     result.ion_ion_energy = ewald.total;
     result.total_valence_charge = automatic_nelect;
     result.options_used = options;

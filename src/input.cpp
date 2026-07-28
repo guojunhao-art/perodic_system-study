@@ -133,6 +133,24 @@ bool parse_selective_flag(
     );
 }
 
+bool parse_boolean(
+    const std::string& value,
+    const std::string& context) {
+
+    const std::string normalized = lowercase(trim(value));
+    if (normalized == "true" || normalized == "yes" ||
+        normalized == "on" || normalized == "1") {
+        return true;
+    }
+    if (normalized == "false" || normalized == "no" ||
+        normalized == "off" || normalized == "0") {
+        return false;
+    }
+    throw std::runtime_error(
+        context + " must be on/off, true/false, yes/no, or 1/0."
+    );
+}
+
 std::filesystem::path resolve_relative_path(
     const std::filesystem::path& base_directory,
     const std::string& value) {
@@ -219,6 +237,9 @@ KPointSet make_uniform_kpoint_mesh(
     result.description = gamma_centered
         ? "Gamma-centered"
         : "Monkhorst-Pack";
+    result.uniform_mesh = true;
+    result.mesh = mesh;
+    result.gamma_centered = gamma_centered;
 
     auto coordinate = [gamma_centered](int index, int count) {
         if (!gamma_centered) {
@@ -675,6 +696,15 @@ CalculationConfig read_calculation_config(const std::string& path) {
                 parse_integer(value, key);
         } else if (key == "bands_output") {
             config.bands.output_path = value;
+        } else if (key == "kpoint_symmetry") {
+            config.kpoint_symmetry.enabled =
+                parse_boolean(value, key);
+        } else if (key == "kpoint_time_reversal") {
+            config.kpoint_symmetry.include_time_reversal =
+                parse_boolean(value, key);
+        } else if (key == "symmetry_tolerance_angstrom") {
+            config.kpoint_symmetry.tolerance_angstrom =
+                parse_double(value, key);
         } else if (key == "kpoints") {
             const auto fields = tokens(lowercase(value));
             if (fields.size() == 1 && fields[0] == "gamma") {
@@ -683,6 +713,7 @@ CalculationConfig read_calculation_config(const std::string& path) {
             } else if (fields.size() == 1 && fields[0] == "explicit") {
                 config.kpoints.points.clear();
                 config.kpoints.description = "Explicit";
+                config.kpoints.uniform_mesh = false;
                 explicit_kpoints = true;
             } else if (fields.size() == 4) {
                 const bool gamma_centered =
@@ -807,6 +838,10 @@ CalculationConfig read_calculation_config(const std::string& path) {
     if (config.scf.nspin != 1 && config.scf.nspin != 2) {
         throw std::runtime_error("nspin must be 1 or 2.");
     }
+    require_positive(
+        config.kpoint_symmetry.tolerance_angstrom,
+        "symmetry_tolerance_angstrom"
+    );
     if (!std::isfinite(config.scf.starting_magnetization)) {
         throw std::runtime_error(
             "starting_magnetization must be finite."

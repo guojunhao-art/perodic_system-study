@@ -61,6 +61,7 @@ add_library(pw_dft_core
     src/kpoint_scf.cpp
     src/scf_convergence.cpp
     src/scf_modules.cpp
+    src/symmetry.cpp
     src/scf.cpp
     src/eigensolver.cpp
     src/mixing.cpp
@@ -270,6 +271,14 @@ if (PWDFT_ENABLE_MPI)
     )
     set_tests_properties(multi_kpoint_scf_mpi_2ranks PROPERTIES PROCESSORS 2)
 endif()
+
+add_executable(test_symmetry tests/test_symmetry.cpp)
+target_link_libraries(test_symmetry PRIVATE pw_dft_core)
+target_compile_definitions(
+    test_symmetry
+    PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+)
+add_test(NAME kpoint_symmetry_reduction COMMAND test_symmetry)
 
 add_executable(test_xc_functional tests/test_xc_functional.cpp)
 target_link_libraries(test_xc_functional PRIVATE pw_dft_core)

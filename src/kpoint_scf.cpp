@@ -5,6 +5,7 @@
 #include "parallel.hpp"
 #include "potentials.hpp"
 #include "scf_convergence.hpp"
+#include "symmetry.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -284,6 +285,12 @@ void validate_inputs(
             "Initial orbital blocks must match nspin times the k-point count."
         );
     }
+    if (!initial_guess.orbital_kpoints.empty() &&
+        initial_guess.orbital_kpoints.size() != kpoints.size()) {
+        throw std::runtime_error(
+            "Initial orbital k-point provenance has the wrong size."
+        );
+    }
 
     double weight_sum = 0.0;
     for (int ik = 0; ik < static_cast<int>(kpoints.size()); ++ik) {
@@ -506,7 +513,8 @@ KPointSCFResult run_kpoint_scf(
     double ion_ion_energy,
     const SCFOptions& options,
     const KPointSCFInitialGuess& initial_guess,
-    std::ostream* log_stream) {
+    std::ostream* log_stream,
+    const std::vector<SpaceGroupOperation>& symmetry_operations) {
 
     const auto scf_start = std::chrono::steady_clock::now();
     const FFTPerformanceCounters fft_performance_start = fft.performance;
@@ -586,6 +594,11 @@ KPointSCFResult run_kpoint_scf(
                 value *= scale;
             }
         }
+    }
+    for (std::vector<double>& spin_density : spin_densities) {
+        symmetrize_scalar_field(
+            lattice, fft, symmetry_operations, spin_density
+        );
     }
 
     std::vector<Eigen::MatrixXcd> orbital_guesses(state_count);
@@ -979,6 +992,9 @@ KPointSCFResult run_kpoint_scf(
 
         for (std::vector<double>& density : spin_density_output) {
             parallel::sum_in_place(density);
+            symmetrize_scalar_field(
+                lattice, fft, symmetry_operations, density
+            );
         }
         const std::vector<double> density_output =
             sum_spin_densities(spin_density_output);

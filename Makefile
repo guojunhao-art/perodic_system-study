@@ -72,6 +72,9 @@ test_kpoints: $(CORE_SRC) tests/test_kpoints.cpp
 test_kpoints_mpi: $(CORE_SRC) tests/test_kpoints.cpp
 	$(MPI_CXX) $(CORE_CPPFLAGS) -DPWDFT_USE_MPI=1 $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
+test_symmetry: $(CORE_SRC) tests/test_symmetry.cpp
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) -DTEST_DATA_DIR=\"tests/data\" $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+
 test-mpi: test_kpoints_mpi
 	$(MPIEXEC) -n 2 ./test_kpoints_mpi
 
@@ -84,13 +87,14 @@ h2_opt: $(CORE_SRC) app/h2_opt.cpp
 si2_force_check: $(CORE_SRC) app/si2_force_check.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
-test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_kpoints test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands
+test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_kpoints test_symmetry test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands
 	./test_forces
 	./test_scf_force_fd
 	./test_radial_transform
 	./test_upf_reader
 	./test_input
 	./test_kpoints
+	./test_symmetry
 	./test_xc_functional
 	./test_upf_local_potential
 	./test_upf_nonlocal
@@ -101,4 +105,4 @@ test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_i
 	./test_bands
 
 clean:
-	rm -f fft pwdft pwdft_mpi upf_info h2_opt si2_force_check test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_kpoints test_kpoints_mpi test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands
+	rm -f fft pwdft pwdft_mpi upf_info h2_opt si2_force_check test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_kpoints test_kpoints_mpi test_symmetry test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands

@@ -39,6 +39,9 @@ struct KPoint {
 struct KPointSet {
     std::vector<KPoint> points{{}};
     std::string description = "Gamma";
+    bool uniform_mesh = true;
+    std::array<int, 3> mesh{{1, 1, 1}};
+    bool gamma_centered = true;
 };
 
 KPointSet make_uniform_kpoint_mesh(
@@ -88,6 +91,12 @@ struct BandStructureOptions {
     std::string output_path = "bands.dat";
 };
 
+struct KPointSymmetryOptions {
+    bool enabled = true;
+    bool include_time_reversal = true;
+    double tolerance_angstrom = 1.0e-5;
+};
+
 struct CalculationConfig {
     std::string source_path;
     std::string structure_path;
@@ -106,6 +115,7 @@ struct CalculationConfig {
     bool nelect_auto = true;
     bool nbands_auto = true;
     KPointSet kpoints;
+    KPointSymmetryOptions kpoint_symmetry;
     SCFOptions scf;
 };
 

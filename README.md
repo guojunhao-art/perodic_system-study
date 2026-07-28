@@ -265,15 +265,57 @@ kpoint = 0.0 0.0 0.0  1
 kpoint = 0.5 0.0 0.0  3
 ```
 
-当前使用完整网格，不进行空间群或时间反演约化。因此均匀网格的每个点权重均为
-$1/N_k$；显式输入则保留用户给定的相对权重。所有 k 点共享同一个全局费米能级，
-不会分别填充电子。解析器和多 k 点回归可单独运行：
+均匀网格默认根据当前晶格、元素种类和原子分数坐标自动识别空间群，并结合当前
+无 SOC、无外磁场 Hamiltonian 的时间反演对称性
+$E_{n\sigma}(\mathbf k)=E_{n\sigma}(-\mathbf k)$ 约化到不可约布里渊区。轨道星
+$\mathcal S_\alpha$ 的代表点权重为
+
+$$
+w_\alpha=\sum_{\mathbf k\in\mathcal S_\alpha}w_{\mathbf k}.
+$$
+
+例如简单立方 Gamma-centered $4^3$ 网格从 64 点约化到 10 点，立方
+Monkhorst--Pack $4^3$ 网格约化到 4 点。若三个网格维数不同，只采用确实把该网格
+映回自身的空间群旋转。输出同时报告完整/不可约点数、结构总操作数和网格兼容操作
+数：
+
+```text
+KPOINTS = Gamma-centered    NKPTS(full/irreducible) = 216/16
+SYMMETRY operations(total/mesh) = 48/48    time reversal = on
+```
+
+空间群操作写成
+
+$$
+\mathbf s' = R\mathbf s+\boldsymbol\tau ,
+$$
+
+其倒空间作用为 $\mathbf k'=R^{-T}\mathbf k$。实现不只是合并本征值权重：每轮
+SCF 的自旋密度会按 $(R,\boldsymbol\tau)$ 对称化，最终原子力也按笛卡尔旋转和
+原子置换平均。因此约化网格与完整网格对应同一个密度和逐原子力；自动 FFT 网格还会
+使被旋转混合的方向具有兼容尺寸。离子弛豫每一步都会重新识别当前结构的对称性；
+若不可约代表点发生改变，只复用密度，不复用旧轨道。
+
+控制参数为：
+
+```text
+kpoint_symmetry = on
+kpoint_time_reversal = on
+symmetry_tolerance_angstrom = 1.0e-5
+```
+
+上述即默认值。要研究可能自发破坏高对称结构的畸变，或逐点与完整网格核对，可设置
+`kpoint_symmetry = off`。`kpoints = explicit` 的坐标和相对权重始终按用户输入
+原样保留，不会被二次约化。所有 k 点仍共享同一个全局费米能级，不会分别填充电子。
+解析器、多 k 点和对称性回归可单独运行：
 
 ```bash
 make test_input
 ./test_input
 make test_kpoints
 ./test_kpoints
+make test_symmetry
+./test_symmetry
 ```
 
 ### 1.3 H₂ 局域 UPF 键长优化

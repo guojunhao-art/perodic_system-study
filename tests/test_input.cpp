@@ -172,6 +172,17 @@ int main() {
                       1.0e-22, "final eigensolver tolerance parsing");
         require_true(config.scf.verbosity == SCFVerbosity::Detailed,
                      "verbosity parsing mismatch");
+        require_true(
+            !config.kpoint_symmetry.enabled &&
+            !config.kpoint_symmetry.include_time_reversal,
+            "k-point symmetry boolean parsing mismatch"
+        );
+        require_close(
+            config.kpoint_symmetry.tolerance_angstrom,
+            2.5e-5,
+            1.0e-20,
+            "symmetry tolerance parsing"
+        );
 
         const CalculationConfig relax_config = read_calculation_config(
             data_path("general_relax.in")
@@ -275,6 +286,12 @@ int main() {
         );
         require_true(gamma_mesh.points.size() == 2,
                      "Gamma-centered mesh size mismatch");
+        require_true(
+            gamma_mesh.uniform_mesh &&
+            gamma_mesh.mesh == std::array<int, 3>{{2, 1, 1}} &&
+            gamma_mesh.gamma_centered,
+            "Gamma-centered mesh metadata mismatch"
+        );
         require_close(gamma_mesh.points[0].frac_position[0], 0.0, 1.0e-14,
                       "Gamma-centered first point");
         require_close(gamma_mesh.points[1].frac_position[0], -0.5, 1.0e-14,
@@ -291,6 +308,13 @@ int main() {
         );
         require_true(mesh_config.kpoints.points.size() == 6,
                      "Monkhorst-Pack mesh size mismatch");
+        require_true(
+            mesh_config.kpoints.uniform_mesh &&
+            mesh_config.kpoints.mesh ==
+                std::array<int, 3>{{2, 3, 1}} &&
+            !mesh_config.kpoints.gamma_centered,
+            "Monkhorst-Pack mesh metadata mismatch"
+        );
         require_close(
             mesh_config.kpoints.points.front().frac_position[0],
             -0.25,
@@ -309,6 +333,10 @@ int main() {
         );
         require_true(explicit_config.kpoints.points.size() == 2,
                      "Explicit k-point count mismatch");
+        require_true(
+            !explicit_config.kpoints.uniform_mesh,
+            "Explicit k points must not be marked as a uniform mesh"
+        );
         require_close(explicit_config.kpoints.points[0].weight, 0.25, 1.0e-14,
                       "First normalized explicit weight");
         require_close(explicit_config.kpoints.points[1].weight, 0.75, 1.0e-14,

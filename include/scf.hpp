@@ -3,6 +3,7 @@
 #include "core.hpp"
 #include "eigensolver.hpp"
 #include "scf_modules.hpp"
+#include "symmetry_types.hpp"
 #include "xc_functional.hpp"
 
 #include <Eigen/Dense>
@@ -138,6 +139,12 @@ struct KPointSCFInitialGuess {
     std::vector<double> density;
     std::vector<std::vector<double>> spin_densities;
     std::vector<Eigen::MatrixXcd> orbitals;
+    /*
+     * Optional provenance for orbital reuse.  Geometry optimization uses
+     * this to discard orbitals if a changed space group changes the
+     * irreducible k-point representatives while retaining the density.
+     */
+    std::vector<Eigen::Vector3d> orbital_kpoints;
 };
 
 struct KPointSCFResult {
@@ -204,4 +211,5 @@ KPointSCFResult run_kpoint_scf(
     double ion_ion_energy,
     const SCFOptions& options,
     const KPointSCFInitialGuess& initial_guess = {},
-    std::ostream* log_stream = nullptr);
+    std::ostream* log_stream = nullptr,
+    const std::vector<SpaceGroupOperation>& symmetry_operations = {});

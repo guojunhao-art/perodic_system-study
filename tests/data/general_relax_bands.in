@@ -1,0 +1,18 @@
+calculation = relax_bands
+structure = POSCAR_direct_selective
+pseudo = Si minimal_sp_nc.upf
+pseudo = H minimal_local_nc.upf
+xc = pz_lda
+kpoints = gamma
+
+ecut_ha = 10.0
+fft_grid = auto
+nelect = auto
+nbands = auto
+occupations = zero_t
+
+max_ionic_steps = 5
+band_points_per_segment = 3
+band_point = G 0.0 0.0 0.0
+band_point = X 0.5 0.0 0.5
+bands_output = test-relax-bands.dat

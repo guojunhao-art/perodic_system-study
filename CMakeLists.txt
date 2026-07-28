@@ -52,6 +52,7 @@ if (NOT TARGET PkgConfig::LIBXC)
 endif()
 
 add_library(pw_dft_core
+    src/bands.cpp
     src/calculation.cpp
     src/fft_workspace.cpp
     src/relaxation.cpp
@@ -301,3 +302,7 @@ add_test(NAME batched_hamiltonian COMMAND test_batched_hamiltonian)
 add_executable(test_relaxation tests/test_relaxation.cpp)
 target_link_libraries(test_relaxation PRIVATE pw_dft_core)
 add_test(NAME fixed_cell_bfgs_relaxation COMMAND test_relaxation)
+
+add_executable(test_bands tests/test_bands.cpp)
+target_link_libraries(test_bands PRIVATE pw_dft_core)
+add_test(NAME fixed_potential_bands COMMAND test_bands)

@@ -27,6 +27,7 @@ spin--orbit coupling），并使用 Hartree 原子单位。代码保留了许多
 - 真实 Si UPF 的非对称 Si₂ 分项/全 SCF 力验证驱动；
 - POSCAR 结构解析、独立计算参数文件和通用多 k 点单点驱动；
 - 固定晶胞 BFGS 离子弛豫、`Selective dynamics`、SCF 热启动和结构轨迹输出；
+- 均匀网格 SCF、冻结势高对称路径 NSCF 能带及“弛豫后算能带”工作流；
 - `upf_info` 文件及局域势检查工具。
 
 `pwdft` 是唯一的主 SCF 程序：它读取计算配置和 POSCAR，并从 NC-UPF 文件构造
@@ -397,7 +398,73 @@ make test_relaxation
 ./test_relaxation
 ```
 
-### 1.6 Davidson 性能诊断
+### 1.6 能带结构与弛豫后能带
+
+`calculation = bands` 在同一次运行中依次执行：
+
+1. 用 `kpoints` 指定的均匀网格完成 SCF，得到收敛密度和全局费米能级；
+2. 从最终密度重新构造并冻结
+   $V_{\mathrm{eff}}^\sigma(\mathbf r)$；
+3. 沿 `band_point` 节点插值的高对称路径逐点求解 Davidson 本征值；
+4. 不更新密度、不做 mixing，也不使用路径点进行布里渊区积分。
+
+例如金刚石结构 Si 原胞可运行：
+
+```bash
+./pwdft examples/si_bands.in
+```
+
+其中 SCF 网格和展示路径是两个独立概念：
+
+```text
+calculation = bands
+kpoints = gamma 6 6 6
+
+band_points_per_segment = 20
+band_point = G 0.000 0.000 0.000
+band_point = X 0.500 0.000 0.500
+band_point = W 0.500 0.250 0.750
+band_point = K 0.375 0.375 0.750
+band_point = G 0.000 0.000 0.000
+band_point = L 0.500 0.500 0.500
+bands_output = si_bands.dat
+```
+
+`band_points_per_segment` 包含相邻节点两端；共享节点只输出一次。上述五段路径因而
+产生 $5(20-1)+1=96$ 个 NSCF 点。横坐标按真实倒空间距离累积：
+
+$$
+x_i=x_{i-1}
++\left|\mathbf B(\mathbf k_i-\mathbf k_{i-1})\right|,
+$$
+
+单位为 Bohr$^{-1}$。自动 FFT 网格会同时检查均匀 SCF 网格和全部路径点，避免某个
+边界 $k$ 点的平面波乘积发生混叠；显式 `fft_grid` 若不足会在 SCF 前报错。
+
+输出 `bands.dat` 使用便于 Python/gnuplot 读取的长格式，包含路径索引、距离、三个
+倒格分数坐标、自旋、能带编号、本征值（Ha/eV）、相对 SCF 费米能的能量（eV）和
+Davidson 残差。以 `# node` 开头的注释记录高对称节点及其横坐标。自旋极化计算会
+按 `spin = 0/1` 输出两套能带。
+
+若希望先优化原子位置再算能带，使用：
+
+```bash
+./pwdft examples/si_relax_bands.in
+```
+
+对应 `calculation = relax_bands`。程序先按普通 `relax` 在固定晶胞中执行 BFGS；
+只有达到力阈值后，才在最终构型上重新做一次路径感知的均匀网格静态 SCF，随后执行
+冻结势 NSCF。若离子优化或最终 SCF 未收敛，不会继续生成能带。当前没有应力张量，
+所以该模式只优化晶胞内原子坐标，不改变晶格常数或晶胞形状。
+
+路径插值和固定零势近自由电子回归可单独运行：
+
+```bash
+make test_bands
+./test_bands
+```
+
+### 1.7 Davidson 性能诊断
 
 高 cutoff 下，基组规模近似按
 
@@ -558,7 +625,7 @@ make test_davidson
 ./test_davidson
 ```
 
-### 1.7 批量 Hamiltonian 与 FFT
+### 1.8 批量 Hamiltonian 与 FFT
 
 `apply_hamiltonian_to_block` 不再逐列调用标量 $H\psi$。对一个含 $m$ 个轨道的 block，
 平面波系数被布置成 $m$ 个连续的三维 reciprocal grids，然后由

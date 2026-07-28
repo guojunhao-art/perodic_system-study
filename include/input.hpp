@@ -49,7 +49,9 @@ void normalize_kpoint_weights(KPointSet& kpoints);
 
 enum class CalculationType {
     SCF,
-    Relax
+    Relax,
+    Bands,
+    RelaxBands
 };
 
 enum class IonAlgorithm {
@@ -69,6 +71,23 @@ struct RelaxationOptions {
     std::string trajectory_path = "relaxation.xyz";
 };
 
+struct BandPathNode {
+    std::string label;
+    Eigen::Vector3d frac_position = Eigen::Vector3d::Zero();
+};
+
+struct BandStructureOptions {
+    std::vector<BandPathNode> path;
+
+    /*
+     * Number of samples on each segment including both end points. Shared
+     * vertices are emitted once, so S segments produce
+     * S * (points_per_segment - 1) + 1 samples.
+     */
+    int points_per_segment = 20;
+    std::string output_path = "bands.dat";
+};
+
 struct CalculationConfig {
     std::string source_path;
     std::string structure_path;
@@ -76,6 +95,7 @@ struct CalculationConfig {
 
     CalculationType calculation = CalculationType::SCF;
     RelaxationOptions relaxation;
+    BandStructureOptions bands;
 
     double ecut_hartree = 0.0;
     std::array<int, 3> fft_grid{{0, 0, 0}};

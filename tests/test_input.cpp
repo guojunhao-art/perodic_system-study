@@ -226,6 +226,50 @@ int main() {
             "relaxation output-path parsing mismatch"
         );
 
+        const CalculationConfig bands_config = read_calculation_config(
+            data_path("general_bands.in")
+        );
+        require_true(
+            bands_config.calculation == CalculationType::Bands,
+            "bands calculation parsing mismatch"
+        );
+        require_true(
+            bands_config.bands.path.size() == 3,
+            "band-path node count mismatch"
+        );
+        require_true(
+            bands_config.bands.path[0].label == "G" &&
+            bands_config.bands.path[1].label == "X" &&
+            bands_config.bands.path[2].label == "L",
+            "band-path label parsing mismatch"
+        );
+        require_close(
+            bands_config.bands.path[1].frac_position[2],
+            0.5,
+            1.0e-14,
+            "band-path coordinate parsing"
+        );
+        require_true(
+            bands_config.bands.points_per_segment == 7 &&
+            bands_config.bands.output_path == "test-bands.dat",
+            "band output-control parsing mismatch"
+        );
+
+        const CalculationConfig relax_bands_config =
+            read_calculation_config(
+                data_path("general_relax_bands.in")
+            );
+        require_true(
+            relax_bands_config.calculation ==
+                CalculationType::RelaxBands,
+            "relax_bands calculation parsing mismatch"
+        );
+        require_true(
+            relax_bands_config.bands.path.size() == 2 &&
+            relax_bands_config.bands.points_per_segment == 3,
+            "relax_bands path parsing mismatch"
+        );
+
         const KPointSet gamma_mesh = make_uniform_kpoint_mesh(
             {{2, 1, 1}}, true
         );

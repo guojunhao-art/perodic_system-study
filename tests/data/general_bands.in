@@ -1,0 +1,18 @@
+calculation = bands
+structure = POSCAR_direct_selective
+pseudo = Si minimal_sp_nc.upf
+pseudo = H minimal_local_nc.upf
+xc = pz_lda
+kpoints = gamma 2 2 2
+
+ecut_ha = 10.0
+fft_grid = auto
+nelect = auto
+nbands = 10
+occupations = zero_t
+
+band_points_per_segment = 7
+band_point = G 0.0 0.0 0.0
+band_point = X 0.5 0.0 0.5
+band_point = L 0.5 0.5 0.5
+bands_output = test-bands.dat

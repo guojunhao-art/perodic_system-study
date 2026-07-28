@@ -355,6 +355,57 @@ void test_fft_dimensions_and_scalar_symmetrization() {
                   "Force symmetrization failed on atom 1");
 }
 
+void test_reciprocal_symmetrization_preserves_fft_buffers() {
+    const Lattice lattice(
+        Eigen::Vector3d(8.0, 0.0, 0.0),
+        Eigen::Vector3d(0.0, 8.0, 0.0),
+        Eigen::Vector3d(0.0, 0.0, 8.0)
+    );
+    FFTWorkspace fft(FFTGrid(6, 6, 6), 1);
+    const std::complex<double>* reciprocal_buffer =
+        fft.reciprocal_grid.data();
+
+    std::vector<SpaceGroupOperation> operations(4);
+    for (int operation = 0; operation < 4; ++operation) {
+        operations[operation].translation =
+            Eigen::Vector3d(
+                0.25 * static_cast<double>(operation),
+                0.0,
+                0.0
+            );
+    }
+
+    std::vector<double> field(fft.grid.ngrid, 0.0);
+    for (int i = 0; i < fft.grid.n1; ++i) {
+        for (int j = 0; j < fft.grid.n2; ++j) {
+            for (int k = 0; k < fft.grid.n3; ++k) {
+                field[fft.grid.index(i, j, k)] =
+                    1.0 + std::cos(
+                        2.0 * M_PI * static_cast<double>(i)
+                        / static_cast<double>(fft.grid.n1)
+                    );
+            }
+        }
+    }
+
+    /*
+     * A quarter-cell translation is incompatible with a six-point real
+     * grid, so this call must use reciprocal-space symmetrization.
+     */
+    symmetrize_scalar_field(lattice, fft, operations, field);
+
+    require(
+        fft.reciprocal_grid.data() == reciprocal_buffer,
+        "Reciprocal symmetrization changed an FFTW-bound buffer address"
+    );
+    for (double value : field) {
+        require_close(
+            value, 1.0, 1.0e-12,
+            "Quarter translations did not remove a Fourier component"
+        );
+    }
+}
+
 void test_full_and_irreducible_scf_agree() {
     AtomicStructure structure;
     structure.comment = "cubic H symmetry integration test";
@@ -444,6 +495,7 @@ int main() {
         test_time_reversal_without_spatial_inversion();
         test_explicit_points_are_not_reinterpreted();
         test_fft_dimensions_and_scalar_symmetrization();
+        test_reciprocal_symmetrization_preserves_fft_buffers();
         test_full_and_irreducible_scf_agree();
         std::cout << "K-point symmetry tests passed.\n";
         return 0;

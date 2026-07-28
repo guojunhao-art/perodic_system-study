@@ -506,7 +506,17 @@ void symmetrize_in_reciprocal_space(
         }
     }
 
-    fft.reciprocal_grid = std::move(symmetrized);
+    /*
+     * FFTW plans retain the data pointers supplied when the workspace is
+     * constructed.  Keep reciprocal_grid's allocation in place: move
+     * assignment would replace its buffer while backward_plan still points
+     * to the old, freed storage.
+     */
+    std::copy(
+        symmetrized.begin(),
+        symmetrized.end(),
+        fft.reciprocal_grid.begin()
+    );
     fftw_execute(fft.backward_plan);
     for (int point = 0; point < grid.ngrid; ++point) {
         field[point] = fft.real_grid[point].real();

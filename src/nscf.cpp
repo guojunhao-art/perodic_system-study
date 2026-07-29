@@ -19,6 +19,14 @@
 
 namespace {
 
+int electronic_state_index(
+    int spin,
+    int kpoint,
+    int kpoint_count) {
+
+    return spin * kpoint_count + kpoint;
+}
+
 Eigen::Vector3i maximum_required_fft_frequency(
     const PlaneWaveBasis3D& basis) {
 

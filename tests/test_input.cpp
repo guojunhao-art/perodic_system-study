@@ -170,6 +170,10 @@ int main() {
                       1.0e-20, "initial eigensolver tolerance parsing");
         require_close(config.scf.eigensolver_tolerance, 4.0e-10,
                       1.0e-22, "final eigensolver tolerance parsing");
+        require_true(
+            config.scf.eigensolver_full_band_accuracy,
+            "full-band eigensolver accuracy parsing mismatch"
+        );
         require_true(config.scf.verbosity == SCFVerbosity::Detailed,
                      "verbosity parsing mismatch");
         require_true(
@@ -266,6 +270,36 @@ int main() {
             "band output-control parsing mismatch"
         );
 
+        const CalculationConfig dos_config = read_calculation_config(
+            data_path("general_dos.in")
+        );
+        require_true(
+            dos_config.calculation == CalculationType::DOS,
+            "DOS calculation parsing mismatch"
+        );
+        require_close(
+            dos_config.dos.smearing_ev,
+            0.15,
+            1.0e-14,
+            "DOS Gaussian width parsing"
+        );
+        require_true(
+            dos_config.dos.points == 1501 &&
+            !dos_config.dos.energy_min_auto &&
+            dos_config.dos.energy_max_auto,
+            "DOS grid-control parsing mismatch"
+        );
+        require_close(
+            dos_config.dos.energy_min_ev,
+            -8.0,
+            1.0e-14,
+            "DOS lower energy limit parsing"
+        );
+        require_true(
+            dos_config.dos.output_path == "test-dos.dat",
+            "DOS output-path parsing mismatch"
+        );
+
         const CalculationConfig relax_bands_config =
             read_calculation_config(
                 data_path("general_relax_bands.in")
@@ -305,6 +339,10 @@ int main() {
         require_true(
             mesh_config.fft_threads == 1,
             "omitted fft_threads should preserve the serial default"
+        );
+        require_true(
+            !mesh_config.scf.eigensolver_full_band_accuracy,
+            "omitted full-band accuracy should preserve the relaxed default"
         );
         require_true(mesh_config.kpoints.points.size() == 6,
                      "Monkhorst-Pack mesh size mismatch");

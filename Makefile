@@ -57,6 +57,9 @@ test_relaxation: $(CORE_SRC) tests/test_relaxation.cpp
 test_bands: $(CORE_SRC) tests/test_bands.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
+test_dos: $(CORE_SRC) tests/test_dos.cpp
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+
 test_radial_transform: src/radial_transform.cpp tests/test_radial_transform.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@
 
@@ -65,6 +68,9 @@ test_upf_reader: src/upf_reader.cpp tests/test_upf_reader.cpp
 
 test_input: src/input.cpp tests/test_input.cpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -DTEST_DATA_DIR=\"tests/data\" $^ -o $@
+
+test_scf_convergence: src/scf_convergence.cpp tests/test_scf_convergence.cpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $^ -o $@
 
 test_kpoints: $(CORE_SRC) tests/test_kpoints.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
@@ -87,12 +93,13 @@ h2_opt: $(CORE_SRC) app/h2_opt.cpp
 si2_force_check: $(CORE_SRC) app/si2_force_check.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
-test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_kpoints test_symmetry test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands
+test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_scf_convergence test_kpoints test_symmetry test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands test_dos
 	./test_forces
 	./test_scf_force_fd
 	./test_radial_transform
 	./test_upf_reader
 	./test_input
+	./test_scf_convergence
 	./test_kpoints
 	./test_symmetry
 	./test_xc_functional
@@ -103,6 +110,7 @@ test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_i
 	./test_batched_hamiltonian
 	./test_relaxation
 	./test_bands
+	./test_dos
 
 clean:
-	rm -f fft pwdft pwdft_mpi upf_info h2_opt si2_force_check test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_kpoints test_kpoints_mpi test_symmetry test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands
+	rm -f fft pwdft pwdft_mpi upf_info h2_opt si2_force_check test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_scf_convergence test_kpoints test_kpoints_mpi test_symmetry test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands test_dos

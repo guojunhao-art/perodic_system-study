@@ -643,6 +643,15 @@ KPointSCFResult run_kpoint_scf(
     double previous_energy = 0.0;
     double previous_band_energy = 0.0;
     double last_signed_energy_change = 0.0;
+    std::vector<std::vector<double>> previous_occupations;
+    if (!options.eigensolver_full_band_accuracy &&
+        options.occupation_mode == OccupationMode::Fixed) {
+        previous_occupations.assign(
+            state_count,
+            options.fixed_occupations
+        );
+    }
+    const std::vector<double> no_previous_occupations;
     const bool logging_enabled =
         parallel::is_root() && log_stream != nullptr
         && options.verbosity != SCFVerbosity::Silent;
@@ -694,6 +703,10 @@ KPointSCFResult run_kpoint_scf(
         double local_maximum_residual = 0.0;
         double local_residual_square_sum = 0.0;
         int local_residual_count = 0;
+        int local_relaxed_solve_count = 0;
+        int local_relaxed_band_failures = 0;
+        double local_maximum_relaxed_residual = 0.0;
+        double local_maximum_relaxed_hard_limit = 0.0;
         std::string local_eigensolver_error;
 
         try {
@@ -716,6 +729,16 @@ KPointSCFResult run_kpoint_scf(
                     );
                     const auto eigensolver_start =
                         std::chrono::steady_clock::now();
+                    const std::vector<double>& state_previous_occupations =
+                        previous_occupations.empty()
+                        ? no_previous_occupations
+                        : previous_occupations[state];
+                    const std::vector<double> band_residual_tolerances =
+                        davidson_band_residual_tolerances(
+                            options.nbands,
+                            eigensolver_tolerance,
+                            state_previous_occupations
+                        );
                     DavidsonResult solution =
                         davidson_lowest_eigenstates(
                             point.basis,
@@ -731,14 +754,22 @@ KPointSCFResult run_kpoint_scf(
                             logging_enabled
                                 && distribution.size() == 1
                                 && options.verbosity ==
-                                    SCFVerbosity::Detailed
+                                    SCFVerbosity::Detailed,
+                            &band_residual_tolerances
                         );
                     local_performance.eigensolver_seconds +=
                         elapsed_seconds(eigensolver_start);
                     const double residual = maximum_residual(
                         solution.residual_norms
                     );
-                    if (!solution.converged) {
+                    const DavidsonResidualAssessment residual_assessment =
+                        assess_davidson_residuals(
+                            solution.residual_norms,
+                            band_residual_tolerances,
+                            eigensolver_tolerance
+                        );
+                    if (!solution.converged &&
+                        !residual_assessment.acceptable) {
                         std::ostringstream message;
                         message
                             << "Davidson eigensolver did not converge at "
@@ -753,8 +784,32 @@ KPointSCFResult run_kpoint_scf(
                             << ", subspace = "
                             << solution.final_subspace_size
                             << ", Hpsi applications = "
-                            << solution.hamiltonian_applications;
+                            << solution.hamiltonian_applications
+                            << ", strict bands converged = "
+                            << (residual_assessment.strict_bands_converged
+                                ? "yes" : "no")
+                            << ", worst strict band = "
+                            << residual_assessment.worst_strict_band
+                            << ", strict-band residual = "
+                            << residual_assessment
+                                .maximum_strict_residual
+                            << ", relaxed-band failures = "
+                            << residual_assessment.relaxed_band_failures;
                         throw std::runtime_error(message.str());
+                    }
+                    if (!solution.converged) {
+                        ++local_relaxed_solve_count;
+                        local_relaxed_band_failures +=
+                            residual_assessment.relaxed_band_failures;
+                        local_maximum_relaxed_residual = std::max(
+                            local_maximum_relaxed_residual,
+                            residual_assessment.maximum_relaxed_residual
+                        );
+                        local_maximum_relaxed_hard_limit = std::max(
+                            local_maximum_relaxed_hard_limit,
+                            residual_assessment
+                                .maximum_accepted_relaxed_residual
+                        );
                     }
 
                     local_eigensolver_steps += solution.iterations;
@@ -827,6 +882,14 @@ KPointSCFResult run_kpoint_scf(
             parallel::sum(local_residual_square_sum);
         const int iteration_residual_count =
             parallel::sum(local_residual_count);
+        const int iteration_relaxed_solve_count =
+            parallel::sum(local_relaxed_solve_count);
+        const int iteration_relaxed_band_failures =
+            parallel::sum(local_relaxed_band_failures);
+        const double iteration_maximum_relaxed_residual =
+            parallel::maximum(local_maximum_relaxed_residual);
+        const double iteration_maximum_relaxed_hard_limit =
+            parallel::maximum(local_maximum_relaxed_hard_limit);
         const double iteration_residual_rms =
             iteration_residual_count > 0
             ? std::sqrt(
@@ -834,6 +897,18 @@ KPointSCFResult run_kpoint_scf(
                 static_cast<double>(iteration_residual_count)
             )
             : 0.0;
+        if (logging_enabled && iteration_relaxed_solve_count > 0) {
+            *log_stream
+                << "WARNING: accepted "
+                << iteration_relaxed_band_failures
+                << " effectively empty Davidson band failure(s) across "
+                << iteration_relaxed_solve_count
+                << " k-point solve(s); maximum residual = "
+                << iteration_maximum_relaxed_residual
+                << ", hard limit = "
+                << iteration_maximum_relaxed_hard_limit
+                << ".\n";
+        }
 
         result.eigensolver_hamiltonian_applications +=
             iteration_hamiltonian_applications;
@@ -895,6 +970,17 @@ KPointSCFResult run_kpoint_scf(
             );
         local_performance.occupations_seconds +=
             elapsed_seconds(phase_start);
+        bool occupation_refinement_needed = false;
+        if (!previous_occupations.empty()) {
+            for (int state = 0; state < state_count; ++state) {
+                occupation_refinement_needed =
+                    occupation_refinement_needed ||
+                    davidson_occupation_refinement_needed(
+                        previous_occupations[state],
+                        occupations.occupations[state]
+                    );
+            }
+        }
 
         phase_start = std::chrono::steady_clock::now();
         std::vector<std::vector<double>> spin_density_output(
@@ -1184,12 +1270,22 @@ KPointSCFResult run_kpoint_scf(
             }
         }
 
-        const bool outer_converged = iteration > 0 &&
+        const bool energy_changes_converged = iteration > 0 &&
             scf_energy_changes_converged(
                 signed_energy_change,
                 signed_band_energy_change,
                 options.energy_tolerance
             );
+        const bool outer_converged =
+            energy_changes_converged &&
+            !occupation_refinement_needed;
+        if (energy_changes_converged &&
+            occupation_refinement_needed &&
+            logging_enabled) {
+            *log_stream
+                << "       A previously empty band became occupied; "
+                << "requesting one strict Davidson refinement.\n";
+        }
         if (outer_converged &&
             eigensolver_tolerances.at_final_tolerance()) {
             result.converged = true;
@@ -1209,6 +1305,9 @@ KPointSCFResult run_kpoint_scf(
 
         previous_energy = energy_for_convergence;
         previous_band_energy = band_energy;
+        if (!options.eigensolver_full_band_accuracy) {
+            previous_occupations = occupations.occupations;
+        }
         for (int ik : distribution.local_kpoints()) {
             for (int spin = 0; spin < options.nspin; ++spin) {
                 const int state = electronic_state_index(

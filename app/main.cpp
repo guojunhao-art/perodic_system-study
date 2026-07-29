@@ -1,5 +1,6 @@
 #include "bands.hpp"
 #include "calculation.hpp"
+#include "dos.hpp"
 #include "input.hpp"
 #include "parallel.hpp"
 #include "relaxation.hpp"
@@ -105,6 +106,21 @@ int main(int argc, char** argv) {
                         << config.bands.output_path << "\n";
                 }
                 return bands.converged ? 0 : 1;
+            }
+            if (config.calculation == CalculationType::DOS) {
+                const DensityOfStatesResult dos =
+                    compute_density_of_states(
+                        result.scf,
+                        result.options_used,
+                        config.dos
+                    );
+                if (parallel::is_root()) {
+                    write_density_of_states(
+                        config.dos.output_path, dos
+                    );
+                    std::cout << "  density of states written to "
+                        << config.dos.output_path << "\n";
+                }
             }
             return result.converged ? 0 : 1;
         } catch (const std::exception& error) {

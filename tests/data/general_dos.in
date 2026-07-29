@@ -1,0 +1,18 @@
+calculation = dos
+structure = POSCAR_direct_selective
+pseudo = Si minimal_sp_nc.upf
+pseudo = H minimal_local_nc.upf
+xc = pz_lda
+kpoints = mp 4 4 4
+
+ecut_ha = 10.0
+fft_grid = auto
+nelect = auto
+nbands = 12
+occupations = zero_t
+
+dos_smearing_ev = 0.15
+dos_points = 1501
+dos_energy_min_ev = -8.0
+dos_energy_max_ev = auto
+dos_output = test-dos.dat

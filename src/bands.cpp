@@ -281,8 +281,10 @@ BandStructureResult solve_fixed_potential_bands(
                  * hard failure for materially unconverged states.
                  */
                 const double maximum_acceptable_residual =
-                    band_residual_grace_factor
-                    * options.eigensolver_tolerance;
+                    options.eigensolver_full_band_accuracy
+                    ? options.eigensolver_tolerance
+                    : band_residual_grace_factor
+                        * options.eigensolver_tolerance;
                 if (!solution.converged &&
                     residual >= maximum_acceptable_residual) {
                     std::ostringstream message;

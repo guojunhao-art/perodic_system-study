@@ -512,9 +512,12 @@ CalculationConfig read_calculation_config(const std::string& path) {
                 config.calculation = CalculationType::Bands;
             } else if (calculation == "relax_bands") {
                 config.calculation = CalculationType::RelaxBands;
+            } else if (calculation == "dos") {
+                config.calculation = CalculationType::DOS;
             } else {
                 throw std::runtime_error(
-                    "calculation must be scf, relax, bands, or relax_bands."
+                    "calculation must be scf, relax, bands, relax_bands, "
+                    "or dos."
                 );
             }
         } else if (key == "structure") {
@@ -630,6 +633,9 @@ CalculationConfig read_calculation_config(const std::string& path) {
             config.scf.eigensolver_tolerance = parse_double(value, key);
         } else if (key == "eigensolver_denom_floor_ha") {
             config.scf.eigensolver_denom_floor = parse_double(value, key);
+        } else if (key == "eigensolver_full_band_accuracy") {
+            config.scf.eigensolver_full_band_accuracy =
+                parse_boolean(value, key);
         } else if (key == "mixing_alpha") {
             config.scf.mixing_alpha = parse_double(value, key);
         } else if (key == "pulay_max_history") {
@@ -696,6 +702,22 @@ CalculationConfig read_calculation_config(const std::string& path) {
                 parse_integer(value, key);
         } else if (key == "bands_output") {
             config.bands.output_path = value;
+        } else if (key == "dos_smearing_ev") {
+            config.dos.smearing_ev = parse_double(value, key);
+        } else if (key == "dos_points") {
+            config.dos.points = parse_integer(value, key);
+        } else if (key == "dos_energy_min_ev") {
+            config.dos.energy_min_auto = lowercase(value) == "auto";
+            if (!config.dos.energy_min_auto) {
+                config.dos.energy_min_ev = parse_double(value, key);
+            }
+        } else if (key == "dos_energy_max_ev") {
+            config.dos.energy_max_auto = lowercase(value) == "auto";
+            if (!config.dos.energy_max_auto) {
+                config.dos.energy_max_ev = parse_double(value, key);
+            }
+        } else if (key == "dos_output") {
+            config.dos.output_path = value;
         } else if (key == "kpoint_symmetry") {
             config.kpoint_symmetry.enabled =
                 parse_boolean(value, key);
@@ -876,6 +898,28 @@ CalculationConfig read_calculation_config(const std::string& path) {
     if (requests_bands && trim(config.bands.output_path).empty()) {
         throw std::runtime_error(
             "bands_output cannot be empty for a band calculation."
+        );
+    }
+    if (!std::isfinite(config.dos.smearing_ev) ||
+        config.dos.smearing_ev <= 0.0) {
+        throw std::runtime_error(
+            "dos_smearing_ev must be finite and positive."
+        );
+    }
+    if (config.dos.points < 2) {
+        throw std::runtime_error("dos_points must be at least 2.");
+    }
+    if (!config.dos.energy_min_auto &&
+        !config.dos.energy_max_auto &&
+        config.dos.energy_min_ev >= config.dos.energy_max_ev) {
+        throw std::runtime_error(
+            "dos_energy_min_ev must be smaller than dos_energy_max_ev."
+        );
+    }
+    if (config.calculation == CalculationType::DOS &&
+        trim(config.dos.output_path).empty()) {
+        throw std::runtime_error(
+            "dos_output cannot be empty for a DOS calculation."
         );
     }
     require_positive(

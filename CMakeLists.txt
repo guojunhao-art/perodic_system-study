@@ -54,6 +54,7 @@ endif()
 add_library(pw_dft_core
     src/bands.cpp
     src/calculation.cpp
+    src/dos.cpp
     src/fft_workspace.cpp
     src/relaxation.cpp
     src/hamiltonian.cpp
@@ -256,6 +257,10 @@ target_compile_definitions(
 )
 add_test(NAME poscar_and_calculation_input COMMAND test_input)
 
+add_executable(test_scf_convergence tests/test_scf_convergence.cpp)
+target_link_libraries(test_scf_convergence PRIVATE pw_dft_core)
+add_test(NAME scf_convergence_policy COMMAND test_scf_convergence)
+
 add_executable(test_kpoints tests/test_kpoints.cpp)
 target_link_libraries(test_kpoints PRIVATE pw_dft_core)
 add_test(NAME multi_kpoint_scf COMMAND test_kpoints)
@@ -315,3 +320,7 @@ add_test(NAME fixed_cell_bfgs_relaxation COMMAND test_relaxation)
 add_executable(test_bands tests/test_bands.cpp)
 target_link_libraries(test_bands PRIVATE pw_dft_core)
 add_test(NAME fixed_potential_bands COMMAND test_bands)
+
+add_executable(test_dos tests/test_dos.cpp)
+target_link_libraries(test_dos PRIVATE pw_dft_core)
+add_test(NAME gaussian_density_of_states COMMAND test_dos)

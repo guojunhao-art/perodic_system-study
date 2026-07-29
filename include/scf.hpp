@@ -58,6 +58,7 @@ struct SCFOptions {
     double eigensolver_initial_tolerance = 1.0e-7;
     double eigensolver_tolerance = 1.0e-10;
     double eigensolver_denom_floor = 1.0e-6;
+    bool eigensolver_full_band_accuracy = false;
 
     double mixing_alpha = 0.10;
     int pulay_max_history = 6;

@@ -112,7 +112,8 @@ DavidsonResult davidson_lowest_eigenstates(
     double residual_tol = 1.0e-10,
     double denom_floor = 1.0e-6,
     const std::vector<NonlocalProjector>* projectors = nullptr,
-    bool verbose = true);
+    bool verbose = true,
+    const std::vector<double>* band_residual_tolerances = nullptr);
 
 struct CanonicalBlock {
     Eigen::MatrixXcd C;

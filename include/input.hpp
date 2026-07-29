@@ -54,7 +54,8 @@ enum class CalculationType {
     SCF,
     Relax,
     Bands,
-    RelaxBands
+    RelaxBands,
+    DOS
 };
 
 enum class IonAlgorithm {
@@ -91,6 +92,22 @@ struct BandStructureOptions {
     std::string output_path = "bands.dat";
 };
 
+struct DensityOfStatesOptions {
+    double smearing_ev = 0.10;
+    int points = 2001;
+
+    /*
+     * Explicit limits are relative to the converged Fermi energy.  The auto
+     * limits span all computed bands plus five Gaussian widths.
+     */
+    bool energy_min_auto = true;
+    bool energy_max_auto = true;
+    double energy_min_ev = 0.0;
+    double energy_max_ev = 0.0;
+
+    std::string output_path = "dos.dat";
+};
+
 struct KPointSymmetryOptions {
     bool enabled = true;
     bool include_time_reversal = true;
@@ -105,6 +122,7 @@ struct CalculationConfig {
     CalculationType calculation = CalculationType::SCF;
     RelaxationOptions relaxation;
     BandStructureOptions bands;
+    DensityOfStatesOptions dos;
 
     double ecut_hartree = 0.0;
     std::array<int, 3> fft_grid{{0, 0, 0}};

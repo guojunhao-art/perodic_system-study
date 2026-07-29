@@ -197,6 +197,11 @@ void test_davidson_against_dense_reference() {
     }
 
     const double residual_tolerance = 2.0e-10;
+    std::vector<double> band_residual_tolerances(
+        nbands,
+        residual_tolerance
+    );
+    band_residual_tolerances.back() = 5.0 * residual_tolerance;
     const DavidsonResult result = davidson_lowest_eigenstates(
         basis,
         fft,
@@ -208,7 +213,8 @@ void test_davidson_against_dense_reference() {
         residual_tolerance,
         1.0e-6,
         nullptr,
-        false
+        false,
+        &band_residual_tolerances
     );
     if (!result.converged) {
         throw std::runtime_error("Davidson did not converge in regression test.");
@@ -220,15 +226,13 @@ void test_davidson_against_dense_reference() {
     ).cwiseAbs().maxCoeff();
     require_less(eigenvalue_error, 2.0e-9, "Davidson eigenvalue error");
 
-    const double maximum_residual = *std::max_element(
-        result.residual_norms.begin(),
-        result.residual_norms.end()
-    );
-    require_less(
-        maximum_residual,
-        1.01 * residual_tolerance,
-        "Davidson maximum residual"
-    );
+    for (int band = 0; band < nbands; ++band) {
+        require_less(
+            result.residual_norms[band],
+            1.01 * band_residual_tolerances[band],
+            "Davidson per-band residual"
+        );
+    }
 
     /*
      * With no max-subspace restart, cached W = HV means that each accepted

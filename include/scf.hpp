@@ -57,6 +57,11 @@ struct SCFOptions {
     int eigensolver_max_subspace = 0;
     double eigensolver_initial_tolerance = 1.0e-7;
     double eigensolver_tolerance = 1.0e-10;
+    /*
+     * Empty bands use max(5 * strict_tolerance, this value) once
+     * occupations from a preceding SCF iteration are available.
+     */
+    double eigensolver_empty_tolerance = 1.0e-6;
     double eigensolver_denom_floor = 1.0e-6;
     bool eigensolver_full_band_accuracy = false;
 

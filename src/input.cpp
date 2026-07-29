@@ -514,10 +514,12 @@ CalculationConfig read_calculation_config(const std::string& path) {
                 config.calculation = CalculationType::RelaxBands;
             } else if (calculation == "dos") {
                 config.calculation = CalculationType::DOS;
+            } else if (calculation == "nscf") {
+                config.calculation = CalculationType::NSCF;
             } else {
                 throw std::runtime_error(
                     "calculation must be scf, relax, bands, relax_bands, "
-                    "or dos."
+                    "dos, or nscf."
                 );
             }
         } else if (key == "structure") {
@@ -631,6 +633,9 @@ CalculationConfig read_calculation_config(const std::string& path) {
             config.scf.eigensolver_initial_tolerance = parse_double(value, key);
         } else if (key == "eigensolver_tolerance_ha") {
             config.scf.eigensolver_tolerance = parse_double(value, key);
+        } else if (key == "eigensolver_empty_tolerance_ha") {
+            config.scf.eigensolver_empty_tolerance =
+                parse_double(value, key);
         } else if (key == "eigensolver_denom_floor_ha") {
             config.scf.eigensolver_denom_floor = parse_double(value, key);
         } else if (key == "eigensolver_full_band_accuracy") {
@@ -718,6 +723,10 @@ CalculationConfig read_calculation_config(const std::string& path) {
             }
         } else if (key == "dos_output") {
             config.dos.output_path = value;
+        } else if (key == "checkpoint_input") {
+            config.checkpoint_input_path = value;
+        } else if (key == "checkpoint_output") {
+            config.checkpoint_output_path = value;
         } else if (key == "kpoint_symmetry") {
             config.kpoint_symmetry.enabled =
                 parse_boolean(value, key);
@@ -818,6 +827,7 @@ CalculationConfig read_calculation_config(const std::string& path) {
         config.scf.energy_tolerance <= 0.0 ||
         config.scf.eigensolver_initial_tolerance <= 0.0 ||
         config.scf.eigensolver_tolerance <= 0.0 ||
+        config.scf.eigensolver_empty_tolerance <= 0.0 ||
         config.scf.eigensolver_denom_floor <= 0.0 ||
         config.scf.degeneracy_tolerance <= 0.0) {
         throw std::runtime_error("SCF tolerances must be positive.");
@@ -826,6 +836,13 @@ CalculationConfig read_calculation_config(const std::string& path) {
         config.scf.eigensolver_tolerance) {
         throw std::runtime_error(
             "eigensolver_initial_tolerance_ha must be no tighter than "
+            "eigensolver_tolerance_ha."
+        );
+    }
+    if (config.scf.eigensolver_empty_tolerance <
+        config.scf.eigensolver_tolerance) {
+        throw std::runtime_error(
+            "eigensolver_empty_tolerance_ha must be no tighter than "
             "eigensolver_tolerance_ha."
         );
     }
@@ -916,10 +933,17 @@ CalculationConfig read_calculation_config(const std::string& path) {
             "dos_energy_min_ev must be smaller than dos_energy_max_ev."
         );
     }
-    if (config.calculation == CalculationType::DOS &&
+    if ((config.calculation == CalculationType::DOS ||
+         config.calculation == CalculationType::NSCF) &&
         trim(config.dos.output_path).empty()) {
         throw std::runtime_error(
-            "dos_output cannot be empty for a DOS calculation."
+            "dos_output cannot be empty for a DOS or NSCF calculation."
+        );
+    }
+    if (config.calculation == CalculationType::NSCF &&
+        trim(config.checkpoint_input_path).empty()) {
+        throw std::runtime_error(
+            "calculation = nscf requires checkpoint_input."
         );
     }
     require_positive(

@@ -574,7 +574,9 @@ SinglePointResult run_single_point(
             << "  EDIFF  = " << options.energy_tolerance
             << " Ha (applied to |dE| and |d eps|)\n"
             << "  DAV density reference = "
-            << options.density_tolerance << "\n"
+            << options.density_tolerance
+            << "    empty-band tolerance = "
+            << options.eigensolver_empty_tolerance << " Ha\n"
             << "  XC     = " << lda_functional_name(options.lda_functional)
             << "    LibXC " << libxc_runtime_version();
         if (options.nspin == 2) {

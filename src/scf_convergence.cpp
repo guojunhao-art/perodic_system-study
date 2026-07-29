@@ -20,7 +20,8 @@ bool scf_energy_changes_converged(
 std::vector<double> davidson_band_residual_tolerances(
     int nbands,
     double strict_tolerance,
-    const std::vector<double>& previous_occupations) {
+    const std::vector<double>& previous_occupations,
+    double empty_tolerance) {
 
     if (nbands <= 0) {
         throw std::runtime_error(
@@ -38,15 +39,21 @@ std::vector<double> davidson_band_residual_tolerances(
             "Previous occupation count must match the Davidson band count."
         );
     }
+    if (!std::isfinite(empty_tolerance) || empty_tolerance <= 0.0) {
+        throw std::runtime_error(
+            "Empty-band Davidson residual tolerance must be positive and "
+            "finite."
+        );
+    }
 
     std::vector<double> tolerances(nbands, strict_tolerance);
     if (previous_occupations.empty()) {
         return tolerances;
     }
 
-    const double empty_tolerance = std::max(
+    const double resolved_empty_tolerance = std::max(
         DAVIDSON_EMPTY_TOLERANCE_FACTOR * strict_tolerance,
-        DAVIDSON_EMPTY_TOLERANCE_FLOOR_HA
+        empty_tolerance
     );
     for (int band = 0; band < nbands; ++band) {
         const double occupation = previous_occupations[band];
@@ -56,7 +63,7 @@ std::vector<double> davidson_band_residual_tolerances(
             );
         }
         if (occupation < DAVIDSON_EMPTY_OCCUPATION_THRESHOLD) {
-            tolerances[band] = empty_tolerance;
+            tolerances[band] = resolved_empty_tolerance;
         }
     }
     return tolerances;

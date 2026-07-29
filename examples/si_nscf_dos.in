@@ -1,0 +1,27 @@
+calculation = nscf
+structure = POSCAR_Si_diamond
+pseudo = Si ../pseudopotentials/Si.pz-vbc.UPF
+xc = pz_lda
+
+# The density and FFT grid come from the converged SCF checkpoint.  The
+# Brillouin-zone mesh and requested band count are independent.
+checkpoint_input = si.scf.chk
+kpoints = mp 20 20 20
+ecut_ha = auto
+fft_grid = auto
+fft_threads = auto
+nelect = auto
+nbands = 12
+nspin = 1
+occupations = zero_t
+
+eigensolver_max_iterations = 150
+eigensolver_tolerance_ha = 1.0e-9
+eigensolver_empty_tolerance_ha = 1.0e-6
+verbosity = compact
+
+dos_smearing_ev = 0.10
+dos_points = 2001
+dos_energy_min_ev = -10.0
+dos_energy_max_ev = 10.0
+dos_output = si_nscf_dos.dat

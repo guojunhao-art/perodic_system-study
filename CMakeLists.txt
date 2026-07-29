@@ -54,6 +54,7 @@ endif()
 add_library(pw_dft_core
     src/bands.cpp
     src/calculation.cpp
+    src/checkpoint.cpp
     src/dos.cpp
     src/fft_workspace.cpp
     src/relaxation.cpp
@@ -66,6 +67,7 @@ add_library(pw_dft_core
     src/scf.cpp
     src/eigensolver.cpp
     src/mixing.cpp
+    src/nscf.cpp
     src/parallel.cpp
     src/ewald.cpp
     src/potentials.cpp
@@ -324,3 +326,34 @@ add_test(NAME fixed_potential_bands COMMAND test_bands)
 add_executable(test_dos tests/test_dos.cpp)
 target_link_libraries(test_dos PRIVATE pw_dft_core)
 add_test(NAME gaussian_density_of_states COMMAND test_dos)
+
+add_executable(test_checkpoint tests/test_checkpoint.cpp)
+target_link_libraries(test_checkpoint PRIVATE pw_dft_core)
+target_compile_definitions(
+    test_checkpoint
+    PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+)
+add_test(NAME scf_checkpoint_roundtrip COMMAND test_checkpoint)
+
+add_executable(test_nscf tests/test_nscf.cpp)
+target_link_libraries(test_nscf PRIVATE pw_dft_core)
+target_compile_definitions(
+    test_nscf
+    PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+)
+add_test(NAME fixed_density_nscf COMMAND test_nscf)
+if (PWDFT_ENABLE_MPI)
+    add_test(
+        NAME fixed_density_nscf_mpi_2ranks
+        COMMAND
+            ${MPIEXEC_EXECUTABLE}
+            ${MPIEXEC_NUMPROC_FLAG} 2
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:test_nscf>
+            ${MPIEXEC_POSTFLAGS}
+    )
+    set_tests_properties(
+        fixed_density_nscf_mpi_2ranks
+        PROPERTIES PROCESSORS 2
+    )
+endif()

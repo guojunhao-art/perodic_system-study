@@ -29,7 +29,8 @@ void test_band_tolerances() {
         davidson_band_residual_tolerances(
             static_cast<int>(occupations.size()),
             strict_tolerance,
-            occupations
+            occupations,
+            1.0e-6
         );
 
     require_close(tolerances[0], strict_tolerance, 0.0,
@@ -38,13 +39,13 @@ void test_band_tolerances() {
                   "Partially occupied-band Davidson tolerance");
     require_close(
         tolerances[2],
-        DAVIDSON_EMPTY_TOLERANCE_FLOOR_HA,
+        1.0e-6,
         0.0,
         "Effectively empty-band Davidson tolerance"
     );
     require_close(
         tolerances[3],
-        DAVIDSON_EMPTY_TOLERANCE_FLOOR_HA,
+        1.0e-6,
         0.0,
         "Empty-band Davidson tolerance"
     );
@@ -67,7 +68,8 @@ void test_band_tolerances() {
         davidson_band_residual_tolerances(
             2,
             1.0e-6,
-            {2.0, 0.0}
+            {2.0, 0.0},
+            1.0e-6
         );
     require_close(loose_strict[1], 5.0e-6, 1.0e-20,
                   "Scaled empty-band Davidson tolerance");
@@ -93,13 +95,13 @@ void test_residual_assessment() {
     const std::vector<double> tolerances{
         strict_tolerance,
         strict_tolerance,
-        DAVIDSON_EMPTY_TOLERANCE_FLOOR_HA,
-        DAVIDSON_EMPTY_TOLERANCE_FLOOR_HA
+        1.0e-6,
+        1.0e-6
     };
 
     DavidsonResidualAssessment assessment =
         assess_davidson_residuals(
-            {5.0e-10, 8.0e-10, 2.0e-7, 8.0e-8},
+            {5.0e-10, 8.0e-10, 2.0e-6, 8.0e-7},
             tolerances,
             strict_tolerance
         );
@@ -112,7 +114,7 @@ void test_residual_assessment() {
     }
 
     assessment = assess_davidson_residuals(
-        {2.0e-9, 8.0e-10, 8.0e-8, 8.0e-8},
+        {2.0e-9, 8.0e-10, 8.0e-7, 8.0e-7},
         tolerances,
         strict_tolerance
     );
@@ -125,7 +127,7 @@ void test_residual_assessment() {
     }
 
     assessment = assess_davidson_residuals(
-        {5.0e-10, 8.0e-10, 6.0e-7, 8.0e-8},
+        {5.0e-10, 8.0e-10, 6.0e-6, 8.0e-7},
         tolerances,
         strict_tolerance
     );
@@ -137,9 +139,9 @@ void test_residual_assessment() {
 
     const std::vector<double> many_empty_tolerances(
         24,
-        DAVIDSON_EMPTY_TOLERANCE_FLOOR_HA
+        1.0e-6
     );
-    const std::vector<double> many_empty_residuals(24, 2.0e-7);
+    const std::vector<double> many_empty_residuals(24, 2.0e-6);
     assessment = assess_davidson_residuals(
         many_empty_residuals,
         many_empty_tolerances,

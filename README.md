@@ -29,6 +29,7 @@ spin--orbit coupling），并使用 Hartree 原子单位。代码保留了许多
 - 固定晶胞 BFGS 离子弛豫、`Selective dynamics`、SCF 热启动和结构轨迹输出；
 - 均匀网格 SCF、冻结势高对称路径 NSCF 能带及“弛豫后算能带”工作流；
 - 基于带权不可约 k 点本征值的 Gaussian 展宽总 DOS、积分 DOS 和分自旋输出；
+- 可持久化自洽密度 checkpoint，以及独立密集 k 网格的 fixed-density NSCF DOS；
 - `upf_info` 文件及局域势检查工具。
 
 `pwdft` 是唯一的主 SCF 程序：它读取计算配置和 POSCAR，并从 NC-UPF 文件构造
@@ -232,6 +233,7 @@ density_tolerance = 1.0e-7
 energy_tolerance_ha = 1.0e-6
 eigensolver_initial_tolerance_ha = 1.0e-7
 eigensolver_tolerance_ha = 2.0e-10
+eigensolver_empty_tolerance_ha = 1.0e-6
 eigensolver_full_band_accuracy = false
 ```
 
@@ -242,11 +244,16 @@ $d\varepsilon$ 已满足外层条件，程序也会用该阈值再完成一次 D
 小于 0.01 的能带使用
 
 $$
-\tau_{\mathrm{empty}}=\max(5\tau_{\mathrm{strict}},10^{-7}\ {\rm Ha}).
+\tau_{\mathrm{empty}}=\max\left(
+5\tau_{\mathrm{strict}},
+\texttt{eigensolver\_empty\_tolerance\_ha}
+\right).
 $$
 
-若一条此前为空的能带在本轮变为占据态，程序会强制再做一轮严格精修。少量高能
-空带若停滞在宽松阈值之上但不超过其 5 倍，只打印警告并保留结果；占据带不满足
+`eigensolver_empty_tolerance_ha` 默认是 $10^{-6}$ Ha；它是空带目标阈值的下限，
+不会放宽占据带。若一条此前为空的能带在本轮变为占据态，程序会强制再做一轮严格
+精修。少量高能空带若停滞在宽松阈值之上但不超过其 5 倍，只打印警告并保留结果；
+占据带不满足
 严格残差、空带残差超过硬上限或失败空带过多仍会终止计算。把 initial 与 final
 设成相同数值只会关闭随 SCF 逐步收紧的调度，不会关闭占据数感知的空带判据。
 设置 `eigensolver_full_band_accuracy = true` 可令所有空带也始终使用严格阈值，
@@ -572,8 +579,8 @@ dos_output = si_dos.dat
 
 DOS 的导带范围由 `nbands` 决定，不能通过增大 `dos_energy_max_ev` 凭空产生未求解
 的高能态；若目标窗口截断，应先增加 `nbands`。谱线平滑程度主要由 k 点网格和
-`dos_smearing_ev` 共同决定。首版使用同一网格完成 SCF 和 DOS；独立的更密
-fixed-potential NSCF DOS 网格留作后续扩展。
+`dos_smearing_ev` 共同决定。若同一网格同时做 SCF 和 DOS 成本过高，可使用下一节
+的持久化 checkpoint 与独立 fixed-density NSCF 网格。
 
 Gaussian 归一化、k 点权重、自旋简并、解析积分及输出格式可单独回归：
 
@@ -582,7 +589,70 @@ make test_dos
 ./test_dos
 ```
 
-### 1.8 Davidson 性能诊断
+### 1.8 SCF checkpoint 与独立 NSCF DOS 网格
+
+SCF 收敛后可以把固定势计算所需的自洽密度写入持久化检查点：
+
+```text
+calculation = scf
+kpoints = mp 8 8 8
+nbands = 8
+checkpoint_output = si.scf.chk
+```
+
+随后读取同一个检查点，在更密的网格上只求本征值：
+
+```text
+calculation = nscf
+checkpoint_input = si.scf.chk
+
+kpoints = mp 20 20 20
+nbands = 12
+
+dos_smearing_ev = 0.10
+dos_points = 2001
+dos_energy_min_ev = -10.0
+dos_energy_max_ev = 10.0
+dos_output = si_nscf_dos.dat
+```
+
+完整示例依次运行：
+
+```bash
+./pwdft examples/si_checkpoint_scf.in
+./pwdft examples/si_nscf_dos.in
+```
+
+`calculation = nscf` 的计算链为：
+
+1. 从 `checkpoint_input` 读取自洽的总/分自旋实空间密度；
+2. 用相同结构、赝势和 XC 泛函重建
+   $V_{\mathrm{ion}}+V_H+V_{\mathrm{xc}}$；
+3. 在输入文件的新 `kpoints` 网格上做一次固定势 Davidson 对角化；
+4. 用新网格的全部本征值和权重重新确定全局费米能与占据数；
+5. 不生成新密度、不 mixing、不计算力，直接按 `dos_*` 参数输出 DOS。
+
+检查点不是单独保存一个局域势。它保存自洽分自旋密度、晶格、原子、FFT 网格、
+截断能、电子数、泛函、Ewald 分割参数、SCF 费米能及每个赝势文件的大小和内容
+指纹。读取时会逐项核对，避免把不同结构或不同赝势的密度静默用于 NSCF。允许改变
+的量只有预期需要独立收敛的 `kpoints`、`nbands`、Davidson 控制和 DOS 参数。
+
+NSCF 的 `ecut_ha = auto` 使用 checkpoint 中的截断能，`fft_grid = auto` 使用
+checkpoint 的密度网格。若新 $k$ 点的平面波乘积超出该网格，程序会明确报错；此时
+应在初始 SCF 中指定更大的显式 `fft_grid` 后重新生成 checkpoint，而不能对密度
+数组直接补零。半导体的 NSCF 费米能可能因更密网格略有变化，因此 DOS 使用重新
+计算的 NSCF 费米能作为零点，而不是照搬 checkpoint 中的值。
+
+文本检查点的往返、结构/赝势兼容性以及串行/MPI 固定密度对角化由以下测试覆盖：
+
+```bash
+make test_checkpoint test_nscf
+./test_checkpoint
+./test_nscf
+make test-mpi
+```
+
+### 1.9 Davidson 性能诊断
 
 高 cutoff 下，基组规模近似按
 

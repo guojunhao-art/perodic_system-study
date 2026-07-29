@@ -737,7 +737,8 @@ KPointSCFResult run_kpoint_scf(
                         davidson_band_residual_tolerances(
                             options.nbands,
                             eigensolver_tolerance,
-                            state_previous_occupations
+                            state_previous_occupations,
+                            options.eigensolver_empty_tolerance
                         );
                     DavidsonResult solution =
                         davidson_lowest_eigenstates(

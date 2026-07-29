@@ -55,7 +55,8 @@ enum class CalculationType {
     Relax,
     Bands,
     RelaxBands,
-    DOS
+    DOS,
+    NSCF
 };
 
 enum class IonAlgorithm {
@@ -123,6 +124,8 @@ struct CalculationConfig {
     RelaxationOptions relaxation;
     BandStructureOptions bands;
     DensityOfStatesOptions dos;
+    std::string checkpoint_input_path;
+    std::string checkpoint_output_path;
 
     double ecut_hartree = 0.0;
     std::array<int, 3> fft_grid{{0, 0, 0}};

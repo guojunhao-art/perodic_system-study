@@ -1,12 +1,52 @@
 #include "bands.hpp"
 #include "calculation.hpp"
+#include "checkpoint.hpp"
 #include "dos.hpp"
 #include "input.hpp"
+#include "nscf.hpp"
 #include "parallel.hpp"
 #include "relaxation.hpp"
 
 #include <exception>
 #include <iostream>
+#include <stdexcept>
+#include <string>
+
+namespace {
+
+void write_checkpoint_if_requested(
+    const AtomicStructure& structure,
+    const CalculationConfig& config,
+    const SinglePointResult& result) {
+
+    if (config.checkpoint_output_path.empty()) {
+        return;
+    }
+    std::string local_error;
+    if (parallel::is_root()) {
+        try {
+            write_scf_checkpoint(
+                config.checkpoint_output_path,
+                make_scf_checkpoint(structure, config, result)
+            );
+        } catch (const std::exception& error) {
+            local_error = error.what();
+        }
+    }
+    const std::string error =
+        parallel::first_error(local_error);
+    if (!error.empty()) {
+        throw std::runtime_error(
+            "SCF checkpoint write failed: " + error
+        );
+    }
+    if (parallel::is_root()) {
+        std::cout << "  SCF checkpoint written to "
+            << config.checkpoint_output_path << "\n";
+    }
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
     try {
@@ -25,6 +65,33 @@ int main(int argc, char** argv) {
             );
             std::ostream* log_stream =
                 parallel::is_root() ? &std::cout : nullptr;
+            if (config.calculation == CalculationType::NSCF) {
+                const SCFCheckpoint checkpoint =
+                    read_scf_checkpoint(
+                        config.checkpoint_input_path
+                    );
+                const NSCFResult nscf =
+                    run_fixed_density_nscf(
+                        structure, config, checkpoint, log_stream
+                    );
+                if (!nscf.converged) {
+                    return 1;
+                }
+                const DensityOfStatesResult dos =
+                    compute_density_of_states(
+                        nscf.electronic,
+                        nscf.options_used,
+                        config.dos
+                    );
+                if (parallel::is_root()) {
+                    write_density_of_states(
+                        config.dos.output_path, dos
+                    );
+                    std::cout << "  NSCF density of states written to "
+                        << config.dos.output_path << "\n";
+                }
+                return 0;
+            }
             if (config.calculation == CalculationType::RelaxBands) {
                 CalculationConfig relaxation_config = config;
                 relaxation_config.calculation = CalculationType::Relax;
@@ -58,6 +125,9 @@ int main(int argc, char** argv) {
                 if (!final_scf.converged) {
                     return 1;
                 }
+                write_checkpoint_if_requested(
+                    relaxation.structure, config, final_scf
+                );
                 const BandStructureResult bands = run_band_structure(
                     relaxation.structure, config, final_scf, log_stream
                 );
@@ -82,6 +152,11 @@ int main(int argc, char** argv) {
                         result.electronic
                     );
                 }
+                if (result.converged) {
+                    write_checkpoint_if_requested(
+                        result.structure, config, result.electronic
+                    );
+                }
                 return result.converged ? 0 : 1;
             }
 
@@ -94,6 +169,9 @@ int main(int argc, char** argv) {
             if (!result.converged) {
                 return 1;
             }
+            write_checkpoint_if_requested(
+                structure, config, result
+            );
             if (config.calculation == CalculationType::Bands) {
                 const BandStructureResult bands = run_band_structure(
                     structure, config, result, log_stream

@@ -19,13 +19,14 @@ bool scf_energy_changes_converged(
  */
 constexpr double DAVIDSON_EMPTY_OCCUPATION_THRESHOLD = 1.0e-2;
 constexpr double DAVIDSON_EMPTY_TOLERANCE_FACTOR = 5.0;
-constexpr double DAVIDSON_EMPTY_TOLERANCE_FLOOR_HA = 1.0e-7;
+constexpr double DAVIDSON_DEFAULT_EMPTY_TOLERANCE_HA = 1.0e-6;
 constexpr double DAVIDSON_EMPTY_FAILURE_GRACE_FACTOR = 5.0;
 
 std::vector<double> davidson_band_residual_tolerances(
     int nbands,
     double strict_tolerance,
-    const std::vector<double>& previous_occupations = {});
+    const std::vector<double>& previous_occupations = {},
+    double empty_tolerance = DAVIDSON_DEFAULT_EMPTY_TOLERANCE_HA);
 
 /*
  * If a band classified as empty from the preceding iteration becomes

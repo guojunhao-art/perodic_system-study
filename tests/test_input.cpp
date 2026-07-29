@@ -170,9 +170,19 @@ int main() {
                       1.0e-20, "initial eigensolver tolerance parsing");
         require_close(config.scf.eigensolver_tolerance, 4.0e-10,
                       1.0e-22, "final eigensolver tolerance parsing");
+        require_close(
+            config.scf.eigensolver_empty_tolerance,
+            2.0e-6,
+            1.0e-20,
+            "empty-band eigensolver tolerance parsing"
+        );
         require_true(
             config.scf.eigensolver_full_band_accuracy,
             "full-band eigensolver accuracy parsing mismatch"
+        );
+        require_true(
+            config.checkpoint_output_path == "test-scf.chk",
+            "checkpoint output parsing mismatch"
         );
         require_true(config.scf.verbosity == SCFVerbosity::Detailed,
                      "verbosity parsing mismatch");
@@ -300,6 +310,24 @@ int main() {
             "DOS output-path parsing mismatch"
         );
 
+        const CalculationConfig nscf_config =
+            read_calculation_config(data_path("general_nscf.in"));
+        require_true(
+            nscf_config.calculation == CalculationType::NSCF,
+            "NSCF calculation parsing mismatch"
+        );
+        require_true(
+            nscf_config.checkpoint_input_path == "test-scf.chk" &&
+            nscf_config.dos.output_path == "test-nscf-dos.dat",
+            "NSCF checkpoint or DOS output parsing mismatch"
+        );
+        require_true(
+            nscf_config.kpoints.mesh ==
+                std::array<int, 3>{{4, 4, 4}} &&
+            !nscf_config.kpoints.gamma_centered,
+            "NSCF k-point mesh parsing mismatch"
+        );
+
         const CalculationConfig relax_bands_config =
             read_calculation_config(
                 data_path("general_relax_bands.in")
@@ -343,6 +371,12 @@ int main() {
         require_true(
             !mesh_config.scf.eigensolver_full_band_accuracy,
             "omitted full-band accuracy should preserve the relaxed default"
+        );
+        require_close(
+            mesh_config.scf.eigensolver_empty_tolerance,
+            1.0e-6,
+            0.0,
+            "omitted empty-band tolerance should preserve its default"
         );
         require_true(mesh_config.kpoints.points.size() == 6,
                      "Monkhorst-Pack mesh size mismatch");

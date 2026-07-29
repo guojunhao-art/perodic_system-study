@@ -59,6 +59,23 @@ struct UPFProjector {
     std::vector<double> r_times_beta;
 };
 
+struct UPFAtomicWavefunction {
+    int index = 0;
+    std::string label;
+    int angular_momentum = -1;
+    int principal_quantum_number = -1;
+    double occupation = 0.0;
+    double pseudo_energy_ry = 0.0;
+
+    /*
+     * UPF PP_CHI stores u_nl(r) = r R_nl(r). These pseudo-atomic
+     * wavefunctions define the atomic subspace used by Löwdin PDOS
+     * projections; they are distinct from the PP_BETA projectors used to
+     * construct the nonlocal pseudopotential.
+     */
+    std::vector<double> r_times_radial_wavefunction;
+};
+
 struct UPFData {
     std::string source_path;
     UPFHeader header;
@@ -68,6 +85,7 @@ struct UPFData {
     std::vector<double> local_potential_ry;
     std::vector<UPFProjector> projectors;
     std::vector<double> dij_ry;
+    std::vector<UPFAtomicWavefunction> atomic_wavefunctions;
 
     double dij(int i, int j) const;
 };

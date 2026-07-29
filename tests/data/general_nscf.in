@@ -4,7 +4,7 @@ pseudo = Si minimal_sp_nc.upf
 pseudo = H minimal_local_nc.upf
 xc = pz_lda
 kpoints = mp 4 4 4
-kpoint_symmetry = on
+kpoint_symmetry = off
 
 ecut_ha = auto
 fft_grid = auto
@@ -23,3 +23,5 @@ dos_points = 1001
 dos_energy_min_ev = -12.0
 dos_energy_max_ev = 8.0
 dos_output = test-nscf-dos.dat
+pdos_output = test-nscf-pdos.dat
+pdos_lowdin_cutoff = 1.0e-9

@@ -5,6 +5,7 @@
 #include "input.hpp"
 #include "nscf.hpp"
 #include "parallel.hpp"
+#include "pdos.hpp"
 #include "relaxation.hpp"
 
 #include <exception>
@@ -77,68 +78,64 @@ int main(int argc, char** argv) {
                 if (!nscf.converged) {
                     return 1;
                 }
+                if (nscf.band_path) {
+                    if (parallel::is_root()) {
+                        write_band_structure(
+                            config.bands.output_path,
+                            nscf
+                        );
+                        std::cout
+                            << "  NSCF band structure written to "
+                            << config.bands.output_path
+                            << "\n";
+                    }
+                    return 0;
+                }
+                const bool needs_dos_grid =
+                    !config.dos.output_path.empty()
+                    || !config.pdos.output_path.empty();
+                if (!needs_dos_grid) {
+                    throw std::runtime_error(
+                        "A Brillouin-zone NSCF calculation has no "
+                        "DOS or PDOS output request."
+                    );
+                }
                 const DensityOfStatesResult dos =
                     compute_density_of_states(
                         nscf.electronic,
                         nscf.options_used,
                         config.dos
                     );
-                if (parallel::is_root()) {
+                if (parallel::is_root() &&
+                    !config.dos.output_path.empty()) {
                     write_density_of_states(
                         config.dos.output_path, dos
                     );
-                    std::cout << "  NSCF density of states written to "
+                    std::cout
+                        << "  NSCF density of states written to "
                         << config.dos.output_path << "\n";
                 }
-                return 0;
-            }
-            if (config.calculation == CalculationType::RelaxBands) {
-                CalculationConfig relaxation_config = config;
-                relaxation_config.calculation = CalculationType::Relax;
-                const RelaxationResult relaxation =
-                    run_fixed_cell_relaxation(
-                        structure, relaxation_config, log_stream
-                    );
-                if (!relaxation.converged) {
-                    if (parallel::is_root()) {
-                        print_single_point_result(
-                            std::cout,
-                            relaxation.structure,
-                            relaxation.electronic
+                if (!config.pdos.output_path.empty()) {
+                    const ProjectedDensityOfStatesResult pdos =
+                        compute_projected_density_of_states(
+                            nscf.electronic,
+                            nscf.options_used,
+                            dos,
+                            nscf.projection
                         );
+                    if (parallel::is_root()) {
+                        write_projected_density_of_states(
+                            config.pdos.output_path,
+                            pdos
+                        );
+                        std::cout
+                            << "  NSCF projected density of states "
+                               "written to "
+                            << config.pdos.output_path
+                            << "\n";
                     }
-                    return 1;
                 }
-                if (log_stream) {
-                    *log_stream
-                        << "\n FINAL STATIC SCF ON THE RELAXED STRUCTURE\n"
-                        << " ===============================================================================\n";
-                }
-                const SinglePointResult final_scf = run_single_point(
-                    relaxation.structure, config, log_stream
-                );
-                if (parallel::is_root()) {
-                    print_single_point_result(
-                        std::cout, relaxation.structure, final_scf
-                    );
-                }
-                if (!final_scf.converged) {
-                    return 1;
-                }
-                write_checkpoint_if_requested(
-                    relaxation.structure, config, final_scf
-                );
-                const BandStructureResult bands = run_band_structure(
-                    relaxation.structure, config, final_scf, log_stream
-                );
-                if (parallel::is_root()) {
-                    write_band_structure(
-                        config.bands.output_path, bands
-                    );
-                    std::cout << "  band structure written to "
-                        << config.bands.output_path << "\n";
-                }
-                return bands.converged ? 0 : 1;
+                return 0;
             }
             if (config.calculation == CalculationType::Relax) {
                 const RelaxationResult result =
@@ -172,34 +169,6 @@ int main(int argc, char** argv) {
             write_checkpoint_if_requested(
                 structure, config, result
             );
-            if (config.calculation == CalculationType::Bands) {
-                const BandStructureResult bands = run_band_structure(
-                    structure, config, result, log_stream
-                );
-                if (parallel::is_root()) {
-                    write_band_structure(
-                        config.bands.output_path, bands
-                    );
-                    std::cout << "  band structure written to "
-                        << config.bands.output_path << "\n";
-                }
-                return bands.converged ? 0 : 1;
-            }
-            if (config.calculation == CalculationType::DOS) {
-                const DensityOfStatesResult dos =
-                    compute_density_of_states(
-                        result.scf,
-                        result.options_used,
-                        config.dos
-                    );
-                if (parallel::is_root()) {
-                    write_density_of_states(
-                        config.dos.output_path, dos
-                    );
-                    std::cout << "  density of states written to "
-                        << config.dos.output_path << "\n";
-                }
-            }
             return result.converged ? 0 : 1;
         } catch (const std::exception& error) {
             if (parallel::is_root()) {

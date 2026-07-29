@@ -1,0 +1,29 @@
+calculation = nscf
+structure = POSCAR_Si_diamond
+pseudo = Si ../pseudopotentials/Si.pz-vbc.UPF
+xc = pz_lda
+
+# Atom- and real-harmonic-resolved PDOS currently uses the full k-point mesh.
+checkpoint_input = si.scf.chk
+kpoints = mp 20 20 20
+kpoint_symmetry = off
+ecut_ha = auto
+fft_grid = auto
+fft_threads = auto
+nelect = auto
+nbands = 20
+nspin = 1
+occupations = zero_t
+
+eigensolver_max_iterations = 150
+eigensolver_tolerance_ha = 1.0e-9
+eigensolver_empty_tolerance_ha = 1.0e-6
+verbosity = compact
+
+dos_smearing_ev = 0.10
+dos_points = 2001
+dos_energy_min_ev = auto
+dos_energy_max_ev = auto
+dos_output = si_nscf_dos.dat
+pdos_output = si_nscf_pdos.dat
+pdos_lowdin_cutoff = 1.0e-10

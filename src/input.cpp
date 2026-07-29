@@ -508,18 +508,20 @@ CalculationConfig read_calculation_config(const std::string& path) {
                 config.calculation = CalculationType::SCF;
             } else if (calculation == "relax") {
                 config.calculation = CalculationType::Relax;
-            } else if (calculation == "bands") {
-                config.calculation = CalculationType::Bands;
-            } else if (calculation == "relax_bands") {
-                config.calculation = CalculationType::RelaxBands;
-            } else if (calculation == "dos") {
-                config.calculation = CalculationType::DOS;
             } else if (calculation == "nscf") {
                 config.calculation = CalculationType::NSCF;
+            } else if (calculation == "bands" ||
+                       calculation == "dos" ||
+                       calculation == "relax_bands") {
+                throw std::runtime_error(
+                    "calculation = " + calculation
+                    + " has been removed. Run calculation = scf (or relax) "
+                      "to write checkpoint_output, then use calculation = "
+                      "nscf with bands_output, dos_output, or pdos_output."
+                );
             } else {
                 throw std::runtime_error(
-                    "calculation must be scf, relax, bands, relax_bands, "
-                    "dos, or nscf."
+                    "calculation must be scf, relax, or nscf."
                 );
             }
         } else if (key == "structure") {
@@ -723,6 +725,11 @@ CalculationConfig read_calculation_config(const std::string& path) {
             }
         } else if (key == "dos_output") {
             config.dos.output_path = value;
+        } else if (key == "pdos_output") {
+            config.pdos.output_path = value;
+        } else if (key == "pdos_lowdin_cutoff") {
+            config.pdos.lowdin_relative_cutoff =
+                parse_double(value, key);
         } else if (key == "checkpoint_input") {
             config.checkpoint_input_path = value;
         } else if (key == "checkpoint_output") {
@@ -903,20 +910,13 @@ CalculationConfig read_calculation_config(const std::string& path) {
             "band_points_per_segment must be at least 2."
         );
     }
+    const bool has_band_path = !config.bands.path.empty();
     const bool requests_bands =
-        config.calculation == CalculationType::Bands
-        || config.calculation == CalculationType::RelaxBands;
-    if (requests_bands && config.bands.path.size() < 2) {
-        throw std::runtime_error(
-            "calculation = bands or relax_bands requires at least two "
-            "band_point lines."
-        );
-    }
-    if (requests_bands && trim(config.bands.output_path).empty()) {
-        throw std::runtime_error(
-            "bands_output cannot be empty for a band calculation."
-        );
-    }
+        !trim(config.bands.output_path).empty();
+    const bool requests_dos =
+        !trim(config.dos.output_path).empty();
+    const bool requests_pdos =
+        !trim(config.pdos.output_path).empty();
     if (!std::isfinite(config.dos.smearing_ev) ||
         config.dos.smearing_ev <= 0.0) {
         throw std::runtime_error(
@@ -933,17 +933,59 @@ CalculationConfig read_calculation_config(const std::string& path) {
             "dos_energy_min_ev must be smaller than dos_energy_max_ev."
         );
     }
-    if ((config.calculation == CalculationType::DOS ||
-         config.calculation == CalculationType::NSCF) &&
-        trim(config.dos.output_path).empty()) {
+    if (!std::isfinite(config.pdos.lowdin_relative_cutoff) ||
+        config.pdos.lowdin_relative_cutoff <= 0.0 ||
+        config.pdos.lowdin_relative_cutoff >= 1.0) {
         throw std::runtime_error(
-            "dos_output cannot be empty for a DOS or NSCF calculation."
+            "pdos_lowdin_cutoff must be finite and in (0, 1)."
         );
     }
-    if (config.calculation == CalculationType::NSCF &&
-        trim(config.checkpoint_input_path).empty()) {
+    if (config.calculation == CalculationType::NSCF) {
+        if (trim(config.checkpoint_input_path).empty()) {
+            throw std::runtime_error(
+                "calculation = nscf requires checkpoint_input."
+            );
+        }
+        if (!requests_bands && !requests_dos && !requests_pdos) {
+            throw std::runtime_error(
+                "calculation = nscf requires at least one of "
+                "bands_output, dos_output, or pdos_output."
+            );
+        }
+        if (has_band_path) {
+            if (config.bands.path.size() < 2) {
+                throw std::runtime_error(
+                    "An NSCF band path requires at least two "
+                    "band_point lines."
+                );
+            }
+            if (!requests_bands) {
+                throw std::runtime_error(
+                    "NSCF band_point lines require bands_output."
+                );
+            }
+            if (requests_dos || requests_pdos) {
+                throw std::runtime_error(
+                    "A high-symmetry NSCF path cannot generate DOS or "
+                    "PDOS. Use a separate uniform-grid NSCF input."
+                );
+            }
+        } else if (requests_bands) {
+            throw std::runtime_error(
+                "bands_output requires at least two band_point lines."
+            );
+        }
+        if (requests_pdos && config.kpoint_symmetry.enabled) {
+            throw std::runtime_error(
+                "Atom- and real-harmonic-resolved PDOS currently requires "
+                "kpoint_symmetry = off."
+            );
+        }
+    } else if (has_band_path || requests_bands ||
+               requests_dos || requests_pdos) {
         throw std::runtime_error(
-            "calculation = nscf requires checkpoint_input."
+            "DOS, PDOS, and band outputs are available only through "
+            "calculation = nscf with checkpoint_input."
         );
     }
     require_positive(

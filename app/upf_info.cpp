@@ -26,13 +26,23 @@ int main(int argc, char** argv) {
                   << "relativistic : " << upf.header.relativistic << "\n"
                   << "z valence    : " << upf.header.z_valence << "\n"
                   << "mesh points  : " << upf.header.mesh_size << "\n"
-                  << "projectors   : " << upf.header.number_of_projectors << "\n";
+                  << "projectors   : " << upf.header.number_of_projectors << "\n"
+                  << "atomic wfc   : " << upf.header.number_of_wavefunctions << "\n";
 
         for (const UPFProjector& projector : upf.projectors) {
             std::cout << "  beta " << projector.index
                       << "  label=" << projector.label
                       << "  l=" << projector.angular_momentum
                       << "  cutoff_index=" << projector.cutoff_radius_index
+                      << "\n";
+        }
+
+        for (const UPFAtomicWavefunction& wavefunction :
+             upf.atomic_wavefunctions) {
+            std::cout << "  chi  " << wavefunction.index
+                      << "  label=" << wavefunction.label
+                      << "  l=" << wavefunction.angular_momentum
+                      << "  occupation=" << wavefunction.occupation
                       << "\n";
         }
 

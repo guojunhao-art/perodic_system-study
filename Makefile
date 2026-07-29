@@ -60,6 +60,9 @@ test_bands: $(CORE_SRC) tests/test_bands.cpp
 test_dos: $(CORE_SRC) tests/test_dos.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
+test_pdos: $(CORE_SRC) tests/test_pdos.cpp
+	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) -DTEST_DATA_DIR=\"tests/data\" $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
+
 test_checkpoint: $(CORE_SRC) tests/test_checkpoint.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) -DTEST_DATA_DIR=\"tests/data\" $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
@@ -103,7 +106,7 @@ h2_opt: $(CORE_SRC) app/h2_opt.cpp
 si2_force_check: $(CORE_SRC) app/si2_force_check.cpp
 	$(CXX) $(CORE_CPPFLAGS) $(CORE_CXXFLAGS) $^ -o $@ $(LDFLAGS) $(CORE_LDLIBS)
 
-test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_scf_convergence test_kpoints test_symmetry test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands test_dos test_checkpoint test_nscf
+test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_scf_convergence test_kpoints test_symmetry test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands test_dos test_pdos test_checkpoint test_nscf
 	./test_forces
 	./test_scf_force_fd
 	./test_radial_transform
@@ -121,8 +124,9 @@ test: test_forces test_scf_force_fd test_radial_transform test_upf_reader test_i
 	./test_relaxation
 	./test_bands
 	./test_dos
+	./test_pdos
 	./test_checkpoint
 	./test_nscf
 
 clean:
-	rm -f fft pwdft pwdft_mpi upf_info h2_opt si2_force_check test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_scf_convergence test_kpoints test_kpoints_mpi test_symmetry test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands test_dos test_checkpoint test_nscf test_nscf_mpi
+	rm -f fft pwdft pwdft_mpi upf_info h2_opt si2_force_check test_forces test_scf_force_fd test_radial_transform test_upf_reader test_input test_scf_convergence test_kpoints test_kpoints_mpi test_symmetry test_xc_functional test_upf_local_potential test_upf_nonlocal test_ewald test_davidson test_batched_hamiltonian test_relaxation test_bands test_dos test_pdos test_checkpoint test_nscf test_nscf_mpi

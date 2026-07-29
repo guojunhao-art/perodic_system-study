@@ -1,9 +1,13 @@
 #include "bands.hpp"
+#include "nscf.hpp"
 
 #include <Eigen/Dense>
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
@@ -76,70 +80,51 @@ int main() {
             "Interior band-path labels"
         );
 
-        std::vector<KPointHamiltonian> hamiltonians(path.size());
-        for (int ik = 0; ik < static_cast<int>(path.size()); ++ik) {
-            hamiltonians[ik].fractional_position =
-                path[ik].frac_position;
-            hamiltonians[ik].weight = 0.0;
-            hamiltonians[ik].basis.generate(
-                lattice,
-                lattice.B * path[ik].frac_position,
-                1.0
-            );
-        }
-
-        const FFTGrid grid(8, 8, 8);
-        FFTWorkspace fft(grid, 1);
-        const std::vector<std::vector<double>> effective_potentials(
-            1, std::vector<double>(grid.ngrid, 0.0)
-        );
-        SCFOptions options;
-        options.nbands = 2;
-        options.nspin = 1;
-        options.eigensolver_max_iterations = 20;
-        options.eigensolver_max_subspace = 8;
-        options.eigensolver_tolerance = 1.0e-11;
-        options.eigensolver_denom_floor = 1.0e-8;
-
-        const double fermi_energy = 0.02;
-        const BandStructureResult bands =
-            solve_fixed_potential_bands(
-                path,
-                hamiltonians,
-                fft,
-                effective_potentials,
-                options,
-                fermi_energy
-            );
-        require_true(bands.converged, "Free-electron band solve");
-        require_true(
-            bands.states.size() == path.size(),
-            "Free-electron band-state count"
-        );
-        require_close(
-            bands.fermi_energy_ha,
-            fermi_energy,
-            0.0,
-            "SCF Fermi reference propagation"
-        );
-        for (int ik = 0; ik < static_cast<int>(path.size()); ++ik) {
-            const double expected =
+        NSCFResult bands;
+        bands.converged = true;
+        bands.band_path = true;
+        bands.path = path;
+        bands.diagonalization.converged = true;
+        bands.diagonalization.nspin = 1;
+        bands.diagonalization.nbands = 2;
+        bands.diagonalization.fermi_energy_ha = 0.02;
+        bands.diagonalization.states.resize(path.size());
+        for (int ik = 0;
+             ik < static_cast<int>(path.size());
+             ++ik) {
+            NSCFElectronicState& state =
+                bands.diagonalization.states[ik];
+            state.spin_channel = 0;
+            state.kpoint_index = ik;
+            state.eigenvalues.resize(2);
+            state.eigenvalues[0] =
                 0.5 * path[ik].frac_position.squaredNorm();
-            require_close(
-                bands.states[ik].eigenvalues[0],
-                expected,
-                1.0e-11,
-                "Lowest free-electron band"
-            );
-            require_true(
-                bands.states[ik].residual_norms[0]
-                    <= options.eigensolver_tolerance,
-                "Free-electron Davidson residual"
-            );
+            state.eigenvalues[1] =
+                state.eigenvalues[0] + 0.5;
+            state.residual_norms = {1.0e-10, 2.0e-7};
         }
+
+        const std::filesystem::path output_path =
+            std::filesystem::temp_directory_path()
+            / "pwdft-test-bands.dat";
+        write_band_structure(
+            output_path.string(), bands
+        );
+        std::ifstream output(output_path);
+        std::ostringstream text;
+        text << output.rdbuf();
+        require_true(
+            text.str().find(
+                "fixed-density NSCF band structure"
+            ) != std::string::npos &&
+            text.str().find("# node 2") !=
+                std::string::npos,
+            "NSCF band output header or nodes"
+        );
+        std::filesystem::remove(output_path);
 
         std::cout
-            << "Band-path interpolation and fixed-potential NSCF tests passed.\n";
+            << "Band-path interpolation and NSCF output tests passed.\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Band-structure test failed: "

@@ -3,9 +3,34 @@
 #include "bands.hpp"
 #include "checkpoint.hpp"
 #include "input.hpp"
+#include "pdos.hpp"
 #include "scf.hpp"
 
+#include <Eigen/Dense>
+
 #include <iosfwd>
+#include <vector>
+
+struct NSCFElectronicState {
+    int spin_channel = 0;
+    int kpoint_index = 0;
+    int owner_rank = 0;
+    Eigen::VectorXd eigenvalues;
+    std::vector<double> residual_norms;
+    int iterations = 0;
+
+    /* Stored only on the rank that owns this k point. */
+    Eigen::MatrixXcd orbitals;
+};
+
+struct NSCFDiagonalizationResult {
+    bool converged = false;
+    int nspin = 1;
+    int nbands = 0;
+    double fermi_energy_ha = 0.0;
+    double wall_time_seconds = 0.0;
+    std::vector<NSCFElectronicState> states;
+};
 
 struct NSCFResult {
     bool converged = false;
@@ -16,9 +41,12 @@ struct NSCFResult {
     bool kpoint_time_reversal_used = false;
     double checkpoint_fermi_energy_ha = 0.0;
     double wall_time_seconds = 0.0;
+    bool band_path = false;
+    std::vector<BandPathSample> path;
     SCFOptions options_used;
     KPointSCFResult electronic;
-    BandStructureResult diagonalization;
+    NSCFDiagonalizationResult diagonalization;
+    AtomicProjectionResult projection;
 };
 
 /*

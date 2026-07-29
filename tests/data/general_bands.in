@@ -1,9 +1,9 @@
-calculation = bands
+calculation = nscf
 structure = POSCAR_direct_selective
 pseudo = Si minimal_sp_nc.upf
 pseudo = H minimal_local_nc.upf
 xc = pz_lda
-kpoints = gamma 2 2 2
+checkpoint_input = test-scf.chk
 
 ecut_ha = 10.0
 fft_grid = auto

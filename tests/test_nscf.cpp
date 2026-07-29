@@ -59,6 +59,7 @@ int main(int argc, char** argv) {
         config.kpoints =
             make_uniform_kpoint_mesh({{2, 1, 1}}, true);
         config.kpoint_symmetry.enabled = false;
+        config.pdos.output_path = "unused-pdos.dat";
 
         SCFCheckpoint checkpoint;
         checkpoint.structure = structure;
@@ -114,6 +115,11 @@ int main(int argc, char** argv) {
             ),
             "NSCF Fermi energy is not finite"
         );
+        require(
+            result.projection.orbitals.size() == 1 &&
+            result.projection.states.size() == 2,
+            "NSCF did not retain the Löwdin PDOS projection weights"
+        );
 
         DensityOfStatesOptions dos_options;
         dos_options.points = 101;
@@ -128,6 +134,19 @@ int main(int argc, char** argv) {
             dos.kpoint_count == 2 &&
             dos.samples.back().integrated_total > 1.99,
             "NSCF eigenvalues were not usable by the DOS module"
+        );
+        const ProjectedDensityOfStatesResult pdos =
+            compute_projected_density_of_states(
+                result.electronic,
+                result.options_used,
+                dos,
+                result.projection
+            );
+        require(
+            pdos.channels.size() == 1 &&
+            pdos.occupied_spilling >= 0.0 &&
+            pdos.occupied_spilling <= 1.0,
+            "NSCF projection weights were not usable by the PDOS module"
         );
 
         if (parallel::is_root()) {

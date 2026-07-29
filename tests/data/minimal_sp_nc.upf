@@ -21,4 +21,14 @@
     </PP_BETA.2>
     <PP_DIJ>1.5 0.0 0.0 3.5</PP_DIJ>
   </PP_NONLOCAL>
+  <PP_PSWFC>
+    <PP_CHI.1 index="1" label="3S" l="0" occupation="2.0"
+      n="3" pseudo_energy="-0.30">
+      0.02 0.08 0.18 0.12 0.01
+    </PP_CHI.1>
+    <PP_CHI.2 index="2" label="3P" l="1" occupation="2.0"
+      n="3" pseudo_energy="-0.10">
+      0.00 0.03 0.14 0.18 0.02
+    </PP_CHI.2>
+  </PP_PSWFC>
 </UPF>

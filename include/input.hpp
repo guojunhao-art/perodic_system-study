@@ -53,9 +53,6 @@ void normalize_kpoint_weights(KPointSet& kpoints);
 enum class CalculationType {
     SCF,
     Relax,
-    Bands,
-    RelaxBands,
-    DOS,
     NSCF
 };
 
@@ -90,7 +87,7 @@ struct BandStructureOptions {
      * S * (points_per_segment - 1) + 1 samples.
      */
     int points_per_segment = 20;
-    std::string output_path = "bands.dat";
+    std::string output_path;
 };
 
 struct DensityOfStatesOptions {
@@ -106,7 +103,12 @@ struct DensityOfStatesOptions {
     double energy_min_ev = 0.0;
     double energy_max_ev = 0.0;
 
-    std::string output_path = "dos.dat";
+    std::string output_path;
+};
+
+struct ProjectedDensityOfStatesOptions {
+    std::string output_path;
+    double lowdin_relative_cutoff = 1.0e-10;
 };
 
 struct KPointSymmetryOptions {
@@ -124,6 +126,7 @@ struct CalculationConfig {
     RelaxationOptions relaxation;
     BandStructureOptions bands;
     DensityOfStatesOptions dos;
+    ProjectedDensityOfStatesOptions pdos;
     std::string checkpoint_input_path;
     std::string checkpoint_output_path;
 

@@ -1,6 +1,5 @@
 #include "calculation.hpp"
 
-#include "bands.hpp"
 #include "ewald.hpp"
 #include "parallel.hpp"
 #include "symmetry.hpp"
@@ -481,25 +480,6 @@ SinglePointResult run_single_point(
                 );
             }
         }
-        const bool requests_bands =
-            config.calculation == CalculationType::Bands
-            || config.calculation == CalculationType::RelaxBands;
-        if (requests_bands) {
-            const auto path = interpolate_band_path(
-                lattice, config.bands
-            );
-            PlaneWaveBasis3D path_basis;
-            for (const BandPathSample& sample : path) {
-                path_basis.generate(
-                    lattice,
-                    lattice.B * sample.frac_position,
-                    ecut_hartree
-                );
-                required_frequency = required_frequency.cwiseMax(
-                    maximum_required_fft_frequency(path_basis)
-                );
-            }
-        }
         fft_dimensions =
             fft_grid_dimensions_from_required_frequency(
                 required_frequency
@@ -516,23 +496,6 @@ SinglePointResult run_single_point(
     );
     for (const KPointHamiltonian& point : kpoint_hamiltonians) {
         require_fft_grid_for_basis_products(point.basis, grid);
-    }
-    const bool requests_bands =
-        config.calculation == CalculationType::Bands
-        || config.calculation == CalculationType::RelaxBands;
-    if (requests_bands) {
-        const auto path = interpolate_band_path(
-            lattice, config.bands
-        );
-        PlaneWaveBasis3D path_basis;
-        for (const BandPathSample& sample : path) {
-            path_basis.generate(
-                lattice,
-                lattice.B * sample.frac_position,
-                ecut_hartree
-            );
-            require_fft_grid_for_basis_products(path_basis, grid);
-        }
     }
     FFTWorkspace fft(grid, config.fft_threads);
     setup_performance.basis_and_fft_seconds =

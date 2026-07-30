@@ -39,6 +39,11 @@ void test_local_only_file() {
     require(upf.header.number_of_projectors == 0, "wrong projector count");
     require(upf.projectors.empty(), "local-only file produced projectors");
     require(upf.dij_ry.empty(), "zero-projector dummy DIJ was not ignored");
+    require(
+        upf.atomic_wavefunctions.size() == 1 &&
+        upf.atomic_wavefunctions[0].label == "1S",
+        "local-only PP_PSWFC was not read"
+    );
     require_close(upf.header.z_valence, 1.0, "Fortran-D exponent");
     require_close(upf.local_potential_ry[2], -0.5, "local potential");
 }
@@ -49,6 +54,25 @@ void test_s_and_p_projectors() {
     require(upf.header.element == "Si", "wrong element");
     require(upf.header.number_of_projectors == 2, "wrong projector count");
     require(upf.projectors.size() == 2, "projectors were not read");
+    require(
+        upf.atomic_wavefunctions.size() == 2,
+        "pseudo-atomic wavefunctions were not read"
+    );
+    require(
+        upf.atomic_wavefunctions[0].angular_momentum == 0 &&
+        upf.atomic_wavefunctions[1].angular_momentum == 1,
+        "wrong PP_CHI angular momenta"
+    );
+    require_close(
+        upf.atomic_wavefunctions[1].occupation,
+        2.0,
+        "PP_CHI occupation"
+    );
+    require_close(
+        upf.atomic_wavefunctions[1].r_times_radial_wavefunction[3],
+        0.18,
+        "PP_CHI radial value"
+    );
     require(upf.projectors[0].angular_momentum == 0, "wrong s angular momentum");
     require(upf.projectors[1].angular_momentum == 1, "wrong p angular momentum");
     require(upf.projectors[0].r_times_beta.size() == 5, "s projector was not padded");

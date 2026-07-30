@@ -170,8 +170,33 @@ int main() {
                       1.0e-20, "initial eigensolver tolerance parsing");
         require_close(config.scf.eigensolver_tolerance, 4.0e-10,
                       1.0e-22, "final eigensolver tolerance parsing");
+        require_close(
+            config.scf.eigensolver_empty_tolerance,
+            2.0e-6,
+            1.0e-20,
+            "empty-band eigensolver tolerance parsing"
+        );
+        require_true(
+            config.scf.eigensolver_full_band_accuracy,
+            "full-band eigensolver accuracy parsing mismatch"
+        );
+        require_true(
+            config.checkpoint_output_path == "test-scf.chk",
+            "checkpoint output parsing mismatch"
+        );
         require_true(config.scf.verbosity == SCFVerbosity::Detailed,
                      "verbosity parsing mismatch");
+        require_true(
+            !config.kpoint_symmetry.enabled &&
+            !config.kpoint_symmetry.include_time_reversal,
+            "k-point symmetry boolean parsing mismatch"
+        );
+        require_close(
+            config.kpoint_symmetry.tolerance_angstrom,
+            2.5e-5,
+            1.0e-20,
+            "symmetry tolerance parsing"
+        );
 
         const CalculationConfig relax_config = read_calculation_config(
             data_path("general_relax.in")
@@ -230,8 +255,8 @@ int main() {
             data_path("general_bands.in")
         );
         require_true(
-            bands_config.calculation == CalculationType::Bands,
-            "bands calculation parsing mismatch"
+            bands_config.calculation == CalculationType::NSCF,
+            "NSCF band calculation parsing mismatch"
         );
         require_true(
             bands_config.bands.path.size() == 3,
@@ -255,19 +280,61 @@ int main() {
             "band output-control parsing mismatch"
         );
 
-        const CalculationConfig relax_bands_config =
-            read_calculation_config(
-                data_path("general_relax_bands.in")
-            );
+        const CalculationConfig nscf_config =
+            read_calculation_config(data_path("general_nscf.in"));
         require_true(
-            relax_bands_config.calculation ==
-                CalculationType::RelaxBands,
-            "relax_bands calculation parsing mismatch"
+            nscf_config.calculation == CalculationType::NSCF,
+            "NSCF calculation parsing mismatch"
         );
         require_true(
-            relax_bands_config.bands.path.size() == 2 &&
-            relax_bands_config.bands.points_per_segment == 3,
-            "relax_bands path parsing mismatch"
+            nscf_config.checkpoint_input_path == "test-scf.chk" &&
+            nscf_config.dos.output_path == "test-nscf-dos.dat" &&
+            nscf_config.pdos.output_path == "test-nscf-pdos.dat",
+            "NSCF checkpoint, DOS, or PDOS output parsing mismatch"
+        );
+        require_close(
+            nscf_config.pdos.lowdin_relative_cutoff,
+            1.0e-9,
+            1.0e-20,
+            "PDOS Löwdin cutoff parsing"
+        );
+        require_true(
+            nscf_config.kpoints.mesh ==
+                std::array<int, 3>{{4, 4, 4}} &&
+            !nscf_config.kpoints.gamma_centered,
+            "NSCF k-point mesh parsing mismatch"
+        );
+
+        bool legacy_dos_rejected = false;
+        try {
+            (void)read_calculation_config(
+                data_path("general_dos.in")
+            );
+        } catch (const std::runtime_error& error) {
+            legacy_dos_rejected =
+                std::string(error.what()).find(
+                    "has been removed"
+                ) != std::string::npos;
+        }
+        require_true(
+            legacy_dos_rejected,
+            "Legacy calculation = dos was not rejected with migration help"
+        );
+
+        bool legacy_relax_bands_rejected = false;
+        try {
+            (void)read_calculation_config(
+                data_path("general_relax_bands.in")
+            );
+        } catch (const std::runtime_error& error) {
+            legacy_relax_bands_rejected =
+                std::string(error.what()).find(
+                    "has been removed"
+                ) != std::string::npos;
+        }
+        require_true(
+            legacy_relax_bands_rejected,
+            "Legacy calculation = relax_bands was not rejected"
         );
 
         const KPointSet gamma_mesh = make_uniform_kpoint_mesh(
@@ -275,6 +342,12 @@ int main() {
         );
         require_true(gamma_mesh.points.size() == 2,
                      "Gamma-centered mesh size mismatch");
+        require_true(
+            gamma_mesh.uniform_mesh &&
+            gamma_mesh.mesh == std::array<int, 3>{{2, 1, 1}} &&
+            gamma_mesh.gamma_centered,
+            "Gamma-centered mesh metadata mismatch"
+        );
         require_close(gamma_mesh.points[0].frac_position[0], 0.0, 1.0e-14,
                       "Gamma-centered first point");
         require_close(gamma_mesh.points[1].frac_position[0], -0.5, 1.0e-14,
@@ -289,8 +362,25 @@ int main() {
             mesh_config.fft_threads == 1,
             "omitted fft_threads should preserve the serial default"
         );
+        require_true(
+            !mesh_config.scf.eigensolver_full_band_accuracy,
+            "omitted full-band accuracy should preserve the relaxed default"
+        );
+        require_close(
+            mesh_config.scf.eigensolver_empty_tolerance,
+            1.0e-6,
+            0.0,
+            "omitted empty-band tolerance should preserve its default"
+        );
         require_true(mesh_config.kpoints.points.size() == 6,
                      "Monkhorst-Pack mesh size mismatch");
+        require_true(
+            mesh_config.kpoints.uniform_mesh &&
+            mesh_config.kpoints.mesh ==
+                std::array<int, 3>{{2, 3, 1}} &&
+            !mesh_config.kpoints.gamma_centered,
+            "Monkhorst-Pack mesh metadata mismatch"
+        );
         require_close(
             mesh_config.kpoints.points.front().frac_position[0],
             -0.25,
@@ -309,6 +399,10 @@ int main() {
         );
         require_true(explicit_config.kpoints.points.size() == 2,
                      "Explicit k-point count mismatch");
+        require_true(
+            !explicit_config.kpoints.uniform_mesh,
+            "Explicit k points must not be marked as a uniform mesh"
+        );
         require_close(explicit_config.kpoints.points[0].weight, 0.25, 1.0e-14,
                       "First normalized explicit weight");
         require_close(explicit_config.kpoints.points[1].weight, 0.75, 1.0e-14,

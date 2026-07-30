@@ -203,6 +203,11 @@ KPointSCFInitialGuess make_initial_guess(
     guess.orbitals.resize(result.kpoints.size());
     for (int ik = 0; ik < static_cast<int>(result.kpoints.size()); ++ik) {
         guess.orbitals[ik] = result.kpoints[ik].orbitals;
+        if (result.kpoints[ik].spin_channel == 0) {
+            guess.orbital_kpoints.push_back(
+                result.kpoints[ik].fractional_position
+            );
+        }
     }
     return guess;
 }

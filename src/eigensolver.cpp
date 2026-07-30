@@ -306,7 +306,8 @@ DavidsonResult davidson_lowest_eigenstates(
     double residual_tol,
     double denom_floor,
     const std::vector<NonlocalProjector>* projectors,
-    bool verbose) {
+    bool verbose,
+    const std::vector<double>* band_residual_tolerances) {
 
     const int nbasis = basis.size();
 
@@ -337,6 +338,21 @@ DavidsonResult davidson_lowest_eigenstates(
         throw std::runtime_error(
             "Davidson residual tolerance must be positive and finite."
         );
+    }
+    if (band_residual_tolerances != nullptr) {
+        if (static_cast<int>(band_residual_tolerances->size()) != nbands) {
+            throw std::runtime_error(
+                "Davidson band-residual tolerance count must match nbands."
+            );
+        }
+        for (double tolerance : *band_residual_tolerances) {
+            if (!std::isfinite(tolerance) || tolerance <= 0.0) {
+                throw std::runtime_error(
+                    "Davidson band-residual tolerances must be positive "
+                    "and finite."
+                );
+            }
+        }
     }
     if (!std::isfinite(denom_floor) || denom_floor <= 0.0) {
         throw std::runtime_error(
@@ -482,6 +498,10 @@ DavidsonResult davidson_lowest_eigenstates(
         int maximum_residual_band = -1;
 
         for (int ib = 0; ib < nbands; ++ib) {
+            const double band_tolerance =
+                band_residual_tolerances == nullptr
+                ? residual_tol
+                : (*band_residual_tolerances)[ib];
             Eigen::VectorXcd r =
                 HX.col(ib) - eps[ib] * X.col(ib);
 
@@ -492,7 +512,7 @@ DavidsonResult davidson_lowest_eigenstates(
                 maximum_residual_band = ib;
             }
 
-            if (rnorm > residual_tol) {
+            if (rnorm > band_tolerance) {
                 all_converged = false;
 
                 /*

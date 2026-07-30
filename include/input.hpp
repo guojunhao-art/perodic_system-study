@@ -39,6 +39,9 @@ struct KPoint {
 struct KPointSet {
     std::vector<KPoint> points{{}};
     std::string description = "Gamma";
+    bool uniform_mesh = true;
+    std::array<int, 3> mesh{{1, 1, 1}};
+    bool gamma_centered = true;
 };
 
 KPointSet make_uniform_kpoint_mesh(
@@ -50,8 +53,7 @@ void normalize_kpoint_weights(KPointSet& kpoints);
 enum class CalculationType {
     SCF,
     Relax,
-    Bands,
-    RelaxBands
+    NSCF
 };
 
 enum class IonAlgorithm {
@@ -85,7 +87,34 @@ struct BandStructureOptions {
      * S * (points_per_segment - 1) + 1 samples.
      */
     int points_per_segment = 20;
-    std::string output_path = "bands.dat";
+    std::string output_path;
+};
+
+struct DensityOfStatesOptions {
+    double smearing_ev = 0.10;
+    int points = 2001;
+
+    /*
+     * Explicit limits are relative to the converged Fermi energy.  The auto
+     * limits span all computed bands plus five Gaussian widths.
+     */
+    bool energy_min_auto = true;
+    bool energy_max_auto = true;
+    double energy_min_ev = 0.0;
+    double energy_max_ev = 0.0;
+
+    std::string output_path;
+};
+
+struct ProjectedDensityOfStatesOptions {
+    std::string output_path;
+    double lowdin_relative_cutoff = 1.0e-10;
+};
+
+struct KPointSymmetryOptions {
+    bool enabled = true;
+    bool include_time_reversal = true;
+    double tolerance_angstrom = 1.0e-5;
 };
 
 struct CalculationConfig {
@@ -96,6 +125,10 @@ struct CalculationConfig {
     CalculationType calculation = CalculationType::SCF;
     RelaxationOptions relaxation;
     BandStructureOptions bands;
+    DensityOfStatesOptions dos;
+    ProjectedDensityOfStatesOptions pdos;
+    std::string checkpoint_input_path;
+    std::string checkpoint_output_path;
 
     double ecut_hartree = 0.0;
     std::array<int, 3> fft_grid{{0, 0, 0}};
@@ -106,6 +139,7 @@ struct CalculationConfig {
     bool nelect_auto = true;
     bool nbands_auto = true;
     KPointSet kpoints;
+    KPointSymmetryOptions kpoint_symmetry;
     SCFOptions scf;
 };
 

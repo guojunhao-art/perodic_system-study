@@ -33,6 +33,11 @@ struct SinglePointResult {
     int plane_wave_count = 0;
     int radial_projector_count = 0;
     int expanded_projector_count = 0;
+    int full_kpoint_count = 0;
+    int irreducible_kpoint_count = 0;
+    int space_group_operation_count = 0;
+    int mesh_symmetry_operation_count = 0;
+    bool kpoint_time_reversal_used = false;
     double ion_ion_energy = 0.0;
     double total_valence_charge = 0.0;
 

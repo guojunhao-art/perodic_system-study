@@ -1,0 +1,27 @@
+calculation = nscf
+structure = POSCAR_direct_selective
+pseudo = Si minimal_sp_nc.upf
+pseudo = H minimal_local_nc.upf
+xc = pz_lda
+kpoints = mp 4 4 4
+kpoint_symmetry = off
+
+ecut_ha = auto
+fft_grid = auto
+nelect = auto
+nbands = 16
+nspin = 1
+occupations = zero_t
+
+eigensolver_max_iterations = 90
+eigensolver_tolerance_ha = 1.0e-9
+eigensolver_empty_tolerance_ha = 1.0e-6
+
+checkpoint_input = test-scf.chk
+dos_smearing_ev = 0.20
+dos_points = 1001
+dos_energy_min_ev = -12.0
+dos_energy_max_ev = 8.0
+dos_output = test-nscf-dos.dat
+pdos_output = test-nscf-pdos.dat
+pdos_lowdin_cutoff = 1.0e-9

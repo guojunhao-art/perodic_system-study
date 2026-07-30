@@ -13,7 +13,7 @@ spin--orbit coupling），并使用 Hartree 原子单位。代码保留了许多
 - 所有 k 点和自旋通道共享化学势的零温/Fermi–Dirac 占据及带权密度、能量和力；
 - LibXC 非磁性/共线自旋极化 LDA exchange + Perdew–Zunger correlation SCF；
 - fixed、简并感知零温和 Fermi–Dirac 占据；
-- 随外层密度残差自动收紧、并在退出前严格精修的 Davidson 容差；
+- 随外层密度残差自动收紧、占据数感知并在退出前精修占据带的 Davidson 容差；
 - 线性/自适应辅助函数和 Pulay density mixing；
 - Gaussian 平滑局域赝势、短程修正和离子–离子能；
 - 保留用于解析回归测试的 $s$-like、$p$-like Gaussian projector；
@@ -27,7 +27,9 @@ spin--orbit coupling），并使用 Hartree 原子单位。代码保留了许多
 - 真实 Si UPF 的非对称 Si₂ 分项/全 SCF 力验证驱动；
 - POSCAR 结构解析、独立计算参数文件和通用多 k 点单点驱动；
 - 固定晶胞 BFGS 离子弛豫、`Selective dynamics`、SCF 热启动和结构轨迹输出；
-- 均匀网格 SCF、冻结势高对称路径 NSCF 能带及“弛豫后算能带”工作流；
+- 可持久化自洽密度 checkpoint，以及统一的 fixed-density `nscf` 谱性质入口；
+- 高对称路径 NSCF 能带，以及密集网格 Gaussian 总 DOS/积分 DOS/分自旋输出；
+- 基于 UPF `PP_PSWFC` 和 Löwdin 正交化原子轨道的逐原子、逐 $l,m$ PDOS；
 - `upf_info` 文件及局域势检查工具。
 
 `pwdft` 是唯一的主 SCF 程序：它读取计算配置和 POSCAR，并从 NC-UPF 文件构造
@@ -231,12 +233,34 @@ density_tolerance = 1.0e-7
 energy_tolerance_ha = 1.0e-6
 eigensolver_initial_tolerance_ha = 1.0e-7
 eigensolver_tolerance_ha = 2.0e-10
+eigensolver_empty_tolerance_ha = 1.0e-6
+eigensolver_full_band_accuracy = false
 ```
 
 这里 `density_tolerance` 只是调节 Davidson 精度的参考尺度，不是外层收敛限；
-`eigensolver_tolerance_ha` 始终是最终精度。即使 $dE$ 和 $d\varepsilon$ 已满足
-外层条件，程序也会用该阈值再完成一次 Davidson 精修后才退出。把 initial 与
-final 设成相同数值即可恢复固定容差。
+`eigensolver_tolerance_ha` 始终是占据及部分占据带的最终精度。即使 $dE$ 和
+$d\varepsilon$ 已满足外层条件，程序也会用该阈值再完成一次 Davidson 精修后才
+退出。第一轮没有可用占据数，所有能带均使用严格阈值；从第二轮起，上一轮占据数
+小于 0.01 的能带使用
+
+$$
+\tau_{\mathrm{empty}}=\max\left(
+5\tau_{\mathrm{strict}},
+\texttt{eigensolver\_empty\_tolerance\_ha}
+\right).
+$$
+
+`eigensolver_empty_tolerance_ha` 默认是 $10^{-6}$ Ha；它是空带目标阈值的下限，
+不会放宽占据带。若一条此前为空的能带在本轮变为占据态，程序会强制再做一轮严格
+精修。少量高能空带若停滞在宽松阈值之上但不超过其 5 倍，只打印警告并保留结果；
+占据带不满足
+严格残差、空带残差超过硬上限或失败空带过多仍会终止计算。把 initial 与 final
+设成相同数值只会关闭随 SCF 逐步收紧的调度，不会关闭占据数感知的空带判据。
+设置 `eigensolver_full_band_accuracy = true` 可令所有空带也始终使用严格阈值，
+适合做数值回归或复现旧行为。fixed-density NSCF 会先按空带阈值得到初始全谱，
+据此确定占据带，再只把占据及部分占据态精修到严格阈值；若精修后占据分类改变，
+会自动补做一次严格精修。高对称路径不用于布里渊区积分，而是以 checkpoint 的
+费米能为参考，将其附近及以下能带视为需要严格精修的能带。
 
 POSCAR 按标准 VASP 单位解释：晶格和 Cartesian 坐标为 Å，读入后自动转换为 Bohr；
 `Direct` 坐标不做长度转换。当前支持一个正缩放因子、负的目标体积缩放、VASP 5
@@ -265,15 +289,57 @@ kpoint = 0.0 0.0 0.0  1
 kpoint = 0.5 0.0 0.0  3
 ```
 
-当前使用完整网格，不进行空间群或时间反演约化。因此均匀网格的每个点权重均为
-$1/N_k$；显式输入则保留用户给定的相对权重。所有 k 点共享同一个全局费米能级，
-不会分别填充电子。解析器和多 k 点回归可单独运行：
+均匀网格默认根据当前晶格、元素种类和原子分数坐标自动识别空间群，并结合当前
+无 SOC、无外磁场 Hamiltonian 的时间反演对称性
+$E_{n\sigma}(\mathbf k)=E_{n\sigma}(-\mathbf k)$ 约化到不可约布里渊区。轨道星
+$\mathcal S_\alpha$ 的代表点权重为
+
+$$
+w_\alpha=\sum_{\mathbf k\in\mathcal S_\alpha}w_{\mathbf k}.
+$$
+
+例如简单立方 Gamma-centered $4^3$ 网格从 64 点约化到 10 点，立方
+Monkhorst--Pack $4^3$ 网格约化到 4 点。若三个网格维数不同，只采用确实把该网格
+映回自身的空间群旋转。输出同时报告完整/不可约点数、结构总操作数和网格兼容操作
+数：
+
+```text
+KPOINTS = Gamma-centered    NKPTS(full/irreducible) = 216/16
+SYMMETRY operations(total/mesh) = 48/48    time reversal = on
+```
+
+空间群操作写成
+
+$$
+\mathbf s' = R\mathbf s+\boldsymbol\tau ,
+$$
+
+其倒空间作用为 $\mathbf k'=R^{-T}\mathbf k$。实现不只是合并本征值权重：每轮
+SCF 的自旋密度会按 $(R,\boldsymbol\tau)$ 对称化，最终原子力也按笛卡尔旋转和
+原子置换平均。因此约化网格与完整网格对应同一个密度和逐原子力；自动 FFT 网格还会
+使被旋转混合的方向具有兼容尺寸。离子弛豫每一步都会重新识别当前结构的对称性；
+若不可约代表点发生改变，只复用密度，不复用旧轨道。
+
+控制参数为：
+
+```text
+kpoint_symmetry = on
+kpoint_time_reversal = on
+symmetry_tolerance_angstrom = 1.0e-5
+```
+
+上述即默认值。要研究可能自发破坏高对称结构的畸变，或逐点与完整网格核对，可设置
+`kpoint_symmetry = off`。`kpoints = explicit` 的坐标和相对权重始终按用户输入
+原样保留，不会被二次约化。所有 k 点仍共享同一个全局费米能级，不会分别填充电子。
+解析器、多 k 点和对称性回归可单独运行：
 
 ```bash
 make test_input
 ./test_input
 make test_kpoints
 ./test_kpoints
+make test_symmetry
+./test_symmetry
 ```
 
 ### 1.3 H₂ 局域 UPF 键长优化
@@ -398,27 +464,46 @@ make test_relaxation
 ./test_relaxation
 ```
 
-### 1.6 能带结构与弛豫后能带
+### 1.6 统一的 SCF checkpoint 与 NSCF 谱性质入口
 
-`calculation = bands` 在同一次运行中依次执行：
+SCF 和离子弛豫只负责获得自洽密度。所有 DOS、PDOS 和 band structure 都通过
+`calculation = nscf` 读取 checkpoint；不再提供 `calculation = dos`、
+`calculation = bands` 或 `calculation = relax_bands`，以免同时维护“先 SCF
+再后处理”和“读取 checkpoint 后处理”两套执行链。
 
-1. 用 `kpoints` 指定的均匀网格完成 SCF，得到收敛密度和全局费米能级；
-2. 从最终密度重新构造并冻结
-   $V_{\mathrm{eff}}^\sigma(\mathbf r)$；
-3. 沿 `band_point` 节点插值的高对称路径逐点求解 Davidson 本征值；
-4. 不更新密度、不做 mixing，也不使用路径点进行布里渊区积分。
-
-例如金刚石结构 Si 原胞可运行：
-
-```bash
-./pwdft examples/si_bands.in
-```
-
-其中 SCF 网格和展示路径是两个独立概念：
+先生成自洽检查点：
 
 ```text
-calculation = bands
-kpoints = gamma 6 6 6
+calculation = scf
+kpoints = mp 8 8 8
+nbands = 8
+checkpoint_output = si.scf.chk
+```
+
+若先做结构优化，则让 `calculation = relax` 写出最终 checkpoint，再用最终
+`CONTCAR` 作为 NSCF 的 `structure`。NSCF 从 checkpoint 读取自洽分自旋密度，
+核对晶格、原子、赝势内容指纹、XC、截断能和 FFT 网格，并重建
+
+$$
+V_{\mathrm{ion}}+V_H[n]+V_{\mathrm{xc}}[n].
+$$
+
+之后只在新的 $k$ 点求解固定 Hamiltonian；不更新密度、不 mixing、也不计算力。
+
+NSCF 输入由输出请求自动分为两种互斥模式：
+
+- 存在 `band_point`：高对称路径，只允许 `bands_output`；
+- 不存在 `band_point`：均匀或显式带权网格，允许 `dos_output`、`pdos_output`
+  或二者同时出现。
+
+旧入口会给出明确迁移提示。一个 NSCF 输入至少要指定一种输出。
+
+#### 高对称路径能带
+
+```text
+calculation = nscf
+checkpoint_input = si.scf.chk
+nbands = 12
 
 band_points_per_segment = 20
 band_point = G 0.000 0.000 0.000
@@ -430,41 +515,195 @@ band_point = L 0.500 0.500 0.500
 bands_output = si_bands.dat
 ```
 
-`band_points_per_segment` 包含相邻节点两端；共享节点只输出一次。上述五段路径因而
-产生 $5(20-1)+1=96$ 个 NSCF 点。横坐标按真实倒空间距离累积：
+完整示例：
+
+```bash
+./pwdft examples/si_checkpoint_scf.in
+./pwdft examples/si_bands.in
+```
+
+`band_points_per_segment` 包含相邻节点两端，共享节点只输出一次；上例产生
+$5(20-1)+1=96$ 个路径点。横坐标按真实倒空间距离累积：
 
 $$
 x_i=x_{i-1}
 +\left|\mathbf B(\mathbf k_i-\mathbf k_{i-1})\right|,
 $$
 
-单位为 Bohr$^{-1}$。自动 FFT 网格会同时检查均匀 SCF 网格和全部路径点，避免某个
-边界 $k$ 点的平面波乘积发生混叠；显式 `fft_grid` 若不足会在 SCF 前报错。
+单位为 Bohr$^{-1}$。路径没有合法的布里渊区积分权重，因此程序不会用它重新确定
+费米能，而是以 checkpoint 的 SCF 费米能为绘图参考。输出为长格式，包含路径
+索引、倒空间距离、$k$ 坐标、自旋、能带、本征值和 Davidson 残差。
 
-输出 `bands.dat` 使用便于 Python/gnuplot 读取的长格式，包含路径索引、距离、三个
-倒格分数坐标、自旋、能带编号、本征值（Ha/eV）、相对 SCF 费米能的能量（eV）和
-Davidson 残差。以 `# node` 开头的注释记录高对称节点及其横坐标。自旋极化计算会
-按 `spin = 0/1` 输出两套能带。
-
-若希望先优化原子位置再算能带，使用：
-
-```bash
-./pwdft examples/si_relax_bands.in
-```
-
-对应 `calculation = relax_bands`。程序先按普通 `relax` 在固定晶胞中执行 BFGS；
-只有达到力阈值后，才在最终构型上重新做一次路径感知的均匀网格静态 SCF，随后执行
-冻结势 NSCF。若离子优化或最终 SCF 未收敛，不会继续生成能带。当前没有应力张量，
-所以该模式只优化晶胞内原子坐标，不改变晶格常数或晶胞形状。
-
-路径插值和固定零势近自由电子回归可单独运行：
+路径插值与 NSCF band 文件格式可单独回归：
 
 ```bash
 make test_bands
 ./test_bands
 ```
 
-### 1.7 Davidson 性能诊断
+### 1.7 NSCF 总态密度
+
+均匀网格 NSCF 用新的 $k$ 点本征值与归一化权重重新确定费米能，并计算 Gaussian
+展宽 DOS。它不会用占据数裁掉空带。非自旋极化时每条 Kohn--Sham 能级自动计入
+2倍自旋简并；`nspin = 2` 时 up/down 通道分别按1倍计数：
+
+$$
+D_\sigma(E)=g_\sigma\sum_{\mathbf k n}w_{\mathbf k}
+\frac{\exp[-(E-\varepsilon_{n\mathbf k\sigma})^2/(2\eta^2)]}
+{\sqrt{2\pi}\eta},
+$$
+
+其中非磁性计算的 $g=2$，共线自旋计算每个通道的 $g_\sigma=1$。积分 DOS 不做
+数值积分，而是直接累加相同 Gaussian 的解析累积分布：
+
+$$
+N_\sigma(E)=g_\sigma\sum_{\mathbf k n}w_{\mathbf k}
+\frac12\left[
+1+\operatorname{erf}
+\left(\frac{E-\varepsilon_{n\mathbf k\sigma}}{\sqrt2\eta}\right)
+\right].
+$$
+
+Si 原胞示例为：
+
+```bash
+./pwdft examples/si_checkpoint_scf.in
+./pwdft examples/si_nscf_dos.in
+```
+
+相关输入为：
+
+```text
+calculation = nscf
+checkpoint_input = si.scf.chk
+kpoints = mp 20 20 20
+nbands = 20
+
+dos_smearing_ev = 0.10
+dos_points = 2001
+dos_energy_min_ev = -10.0
+dos_energy_max_ev = 10.0
+dos_output = si_nscf_dos.dat
+```
+
+显式能量上下限均以 NSCF 网格重新计算的费米能为零点；任一端也可以写成
+`auto`。自动范围覆盖
+全部已计算本征值，并在两端各增加 $5\eta$。`dos_smearing_ev` 仅用于画 DOS，
+与决定 SCF 占据的 `smearing_ev` 相互独立。输出中的 DOS 单位为 states/eV，
+积分 DOS 单位为 states；文件同时保留绝对能量（Ha、eV）和相对费米能（eV）。
+自旋极化计算额外输出 `dos_up`、`dos_down` 及各自积分列。
+
+DOS 的导带范围由 `nbands` 决定，不能通过增大 `dos_energy_max_ev` 凭空产生未求解
+的高能态；若目标窗口截断，应先增加 `nbands`。谱线平滑程度主要由 k 点网格和
+`dos_smearing_ev` 共同决定。
+
+Gaussian 归一化、k 点权重、自旋简并、解析积分及输出格式可单独回归：
+
+```bash
+make test_dos
+./test_dos
+```
+
+### 1.8 Löwdin 原子轨道 PDOS
+
+PDOS 使用 UPF `PP_PSWFC/PP_CHI.*` 中的赝原子波函数，而不是非局域势的
+`PP_BETA` projector。对于原子 $I$、径向波函数 $a$ 和实球谐通道 $l,m$，
+程序先在当前平面波基中构造 Bloch 轨道
+
+$$
+\Phi_{Ialm}^{\mathbf k}(\mathbf G)
+=\frac{4\pi(-i)^l}{\sqrt{\Omega}}
+Y_{lm}(\widehat{\mathbf G+\mathbf k})
+e^{-i(\mathbf G+\mathbf k)\cdot\mathbf R_I}
+\int r\,u_{al}(r)j_l(|\mathbf G+\mathbf k|r)\,dr.
+$$
+
+原始原子轨道在不同原子间并不正交。每个 $k$ 点计算
+
+$$
+S_{\mathbf k}=\Phi_{\mathbf k}^\dagger\Phi_{\mathbf k},\qquad
+\widetilde\Phi_{\mathbf k}
+=\Phi_{\mathbf k}S_{\mathbf k}^{-1/2},
+$$
+
+再定义投影权重
+
+$$
+P_{\mu n\mathbf k\sigma}
+=\left|
+\langle\widetilde\phi_{\mu\mathbf k}|
+\psi_{n\mathbf k\sigma}\rangle
+\right|^2.
+$$
+
+PDOS 与总 DOS 使用完全相同的能量网格和 Gaussian 宽度：
+
+$$
+D_{\mu\sigma}(E)
+=g_\sigma\sum_{\mathbf k n}w_{\mathbf k}
+P_{\mu n\mathbf k\sigma}
+G_\eta(E-\varepsilon_{n\mathbf k\sigma}).
+$$
+
+示例：
+
+```text
+calculation = nscf
+checkpoint_input = si.scf.chk
+kpoints = mp 20 20 20
+kpoint_symmetry = off
+nbands = 20
+
+dos_smearing_ev = 0.10
+dos_points = 2001
+dos_energy_min_ev = auto
+dos_energy_max_ev = auto
+dos_output = si_nscf_dos.dat
+pdos_output = si_nscf_pdos.dat
+pdos_lowdin_cutoff = 1.0e-10
+```
+
+完整示例运行：
+
+```bash
+./pwdft examples/si_checkpoint_scf.in
+./pwdft examples/si_nscf_pdos.in
+```
+
+第一版逐原子、逐实球谐通道投影要求 `kpoint_symmetry = off`。这是因为仅给不可约
+$k$ 点乘星权重不能正确恢复一般的逐原子、逐 $m$ 投影；后续需要实现空间群操作下
+实球谐函数的旋转后才能安全约化。
+
+`pdos_output` 使用长格式，每行给出能量、原子、元素、`PP_CHI` 标签、$l$、QE
+实球谐序号、自旋、PDOS 和积分 PDOS。可按原子、元素、标签或 $l$ 自由分组。
+Löwdin 重叠矩阵的最小/最大本征值、正交误差和 occupied spilling 写入文件头。
+若
+
+$$
+\sum_\mu P_{\mu n\mathbf k}<1,
+$$
+
+缺失部分表示有限赝原子轨道子空间没有覆盖完整平面波态，尤其常见于高能导带；
+程序不会把每条能带的投影强行归一化到1。`pdos_lowdin_cutoff` 是重叠矩阵相对
+本征值阈值；若原子轨道在当前 cutoff 下线性相关，程序会终止并建议检查
+`ecut_ha`，而不是静默丢弃方向。
+
+NSCF 的 `ecut_ha = auto` 使用 checkpoint 截断能，`fft_grid = auto` 使用
+checkpoint 密度网格。若新 $k$ 点的平面波乘积超出该网格，应在初始 SCF 中指定
+更大的显式 `fft_grid` 后重新生成 checkpoint，不能直接给密度数组补零。
+
+checkpoint、NSCF、DOS、Löwdin 投影以及串行/MPI 投影权重汇总由以下测试覆盖：
+
+```bash
+make test_checkpoint test_nscf test_dos test_pdos
+./test_checkpoint
+./test_nscf
+./test_dos
+./test_pdos
+make test-mpi
+```
+
+### 1.9 Davidson 性能诊断
 
 高 cutoff 下，基组规模近似按
 
@@ -526,10 +765,12 @@ DAV:   8    -0.3167089E+02        -0.1234E-07    -0.3921E-06    180   0.241E-08 
 占据加权带能
 $\sum_{\sigma\mathbf kn}w_{\mathbf k}f_{\sigma n\mathbf k}
 \varepsilon_{\sigma n\mathbf k}$ 的变化；`ncg` 是本轮实际 $H\psi$ 次数；`rms`
-是全部已求解能带的 Davidson 残差均方根；`rms(c)` 是输入和输出密度之差的
-范数。自旋计算对电荷密度与磁化密度残差取较大者；该值用于诊断和调整下一轮
-Davidson 精度，但不参与外层收敛判断。只有 `|dE|` 和 `|d eps|` 同时小于
-`energy_tolerance_ha` 才满足外层判据。末尾还会给出累计
+是全部已求解能带的 Davidson 残差均方根，因此启用空带宽松判据后它可以大于
+本轮打印的严格 `eig_tol`；`rms(c)` 是输入和输出密度之差的范数。自旋计算对
+电荷密度与磁化密度残差取较大者；该值用于诊断和调整下一轮 Davidson 精度，但
+不参与外层收敛判断。只有 `|dE|` 和 `|d eps|` 同时小于
+`energy_tolerance_ha`，且没有刚由空带变成占据态的能带等待严格精修，才满足
+外层判据。末尾还会给出累计
 `N_Hpsi`、`N_Hblock`、Davidson 迭代/重启数、`Hpsi_time`、子空间对角化时间和
 SCF 总时间。平均 block 宽度可由 `N_Hpsi/N_Hblock` 估计。性能汇总进一步拆分为
 
@@ -625,7 +866,7 @@ make test_davidson
 ./test_davidson
 ```
 
-### 1.8 批量 Hamiltonian 与 FFT
+### 1.9 批量 Hamiltonian 与 FFT
 
 `apply_hamiltonian_to_block` 不再逐列调用标量 $H\psi$。对一个含 $m$ 个轨道的 block，
 平面波系数被布置成 $m$ 个连续的三维 reciprocal grids，然后由
@@ -990,9 +1231,9 @@ $$
 $$
 
 当 $|dE|$ 和 $|d\varepsilon|$ 第一次同时达标但 $\tau_n>\tau_f$ 时，下一轮直接
-切换到 $\tau_f$；只有这次严格求解后两个能量判据仍然成立，SCF 才被标记为收敛。最终
-`eigensolver work` 摘要仍会报告累计工作量；`verbosity = detailed` 额外打印
-本轮 `eig_tol` 和最大能带残差。
+切换到 $\tau_f$；只有占据带完成严格求解、没有新占据带等待精修，并且两个能量
+判据仍然成立，SCF 才被标记为收敛。最终 `eigensolver work` 摘要仍会报告累计
+工作量；`verbosity = detailed` 额外打印本轮 `eig_tol` 和最大能带残差。
 
 ## 7. 当前 Gaussian 离子模型
 
@@ -1455,8 +1696,12 @@ UPF 格式和字段定义参考
 
 ## 12. 下一步路线
 
-1. 用相同 NC-UPF、cutoff、FFT 网格和超胞分别对H原子与 O₂ 做
-   Quantum ESPRESSO 共线自旋交叉验证；
-2. 为自旋极化总能量补充真实 UPF 的三维全 SCF 力有限差分；
-3. 在 LDA 自旋链路稳定后接入 LibXC PBE/GGA；
-4. 增加能带、总态密度和自旋分辨态密度输出。
+1. 用 `si8_displaced_mp2_relax.in` 的 MP $2^3$--$8^3$ 序列验证占据数感知的
+   Davidson 判据，并比较总能、最大原子力、离子步数和 $H\psi$ 工作量；
+2. 用相同 NC-UPF、cutoff、FFT 网格和 $k$ 点分别对 Si、H 原子与 O₂ 做
+   Quantum ESPRESSO 交叉验证，覆盖总能、占据能带、力和磁矩；
+3. 为共线自旋总能量补充真实 UPF 的三维全 SCF 力有限差分；
+4. 在现有能带工作流之后增加总态密度、分波态密度和自旋分辨态密度输出；
+5. 在 LDA 能量、力和多 $k$ 点链路完成交叉验证后接入 LibXC PBE/GGA；
+6. 最后实现应力张量和变晶胞优化，避免在固定晶胞链路尚未系统验证时同时引入
+   晶格自由度。

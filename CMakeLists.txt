@@ -54,6 +54,8 @@ endif()
 add_library(pw_dft_core
     src/bands.cpp
     src/calculation.cpp
+    src/checkpoint.cpp
+    src/dos.cpp
     src/fft_workspace.cpp
     src/relaxation.cpp
     src/hamiltonian.cpp
@@ -61,10 +63,13 @@ add_library(pw_dft_core
     src/kpoint_scf.cpp
     src/scf_convergence.cpp
     src/scf_modules.cpp
+    src/symmetry.cpp
     src/scf.cpp
     src/eigensolver.cpp
     src/mixing.cpp
+    src/nscf.cpp
     src/parallel.cpp
+    src/pdos.cpp
     src/ewald.cpp
     src/potentials.cpp
     src/forces.cpp
@@ -255,6 +260,10 @@ target_compile_definitions(
 )
 add_test(NAME poscar_and_calculation_input COMMAND test_input)
 
+add_executable(test_scf_convergence tests/test_scf_convergence.cpp)
+target_link_libraries(test_scf_convergence PRIVATE pw_dft_core)
+add_test(NAME scf_convergence_policy COMMAND test_scf_convergence)
+
 add_executable(test_kpoints tests/test_kpoints.cpp)
 target_link_libraries(test_kpoints PRIVATE pw_dft_core)
 add_test(NAME multi_kpoint_scf COMMAND test_kpoints)
@@ -270,6 +279,14 @@ if (PWDFT_ENABLE_MPI)
     )
     set_tests_properties(multi_kpoint_scf_mpi_2ranks PROPERTIES PROCESSORS 2)
 endif()
+
+add_executable(test_symmetry tests/test_symmetry.cpp)
+target_link_libraries(test_symmetry PRIVATE pw_dft_core)
+target_compile_definitions(
+    test_symmetry
+    PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+)
+add_test(NAME kpoint_symmetry_reduction COMMAND test_symmetry)
 
 add_executable(test_xc_functional tests/test_xc_functional.cpp)
 target_link_libraries(test_xc_functional PRIVATE pw_dft_core)
@@ -305,4 +322,47 @@ add_test(NAME fixed_cell_bfgs_relaxation COMMAND test_relaxation)
 
 add_executable(test_bands tests/test_bands.cpp)
 target_link_libraries(test_bands PRIVATE pw_dft_core)
-add_test(NAME fixed_potential_bands COMMAND test_bands)
+add_test(NAME nscf_band_output COMMAND test_bands)
+
+add_executable(test_dos tests/test_dos.cpp)
+target_link_libraries(test_dos PRIVATE pw_dft_core)
+add_test(NAME gaussian_density_of_states COMMAND test_dos)
+
+add_executable(test_pdos tests/test_pdos.cpp)
+target_link_libraries(test_pdos PRIVATE pw_dft_core)
+target_compile_definitions(
+    test_pdos
+    PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+)
+add_test(NAME lowdin_projected_density_of_states COMMAND test_pdos)
+
+add_executable(test_checkpoint tests/test_checkpoint.cpp)
+target_link_libraries(test_checkpoint PRIVATE pw_dft_core)
+target_compile_definitions(
+    test_checkpoint
+    PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+)
+add_test(NAME scf_checkpoint_roundtrip COMMAND test_checkpoint)
+
+add_executable(test_nscf tests/test_nscf.cpp)
+target_link_libraries(test_nscf PRIVATE pw_dft_core)
+target_compile_definitions(
+    test_nscf
+    PRIVATE TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+)
+add_test(NAME fixed_density_nscf COMMAND test_nscf)
+if (PWDFT_ENABLE_MPI)
+    add_test(
+        NAME fixed_density_nscf_mpi_2ranks
+        COMMAND
+            ${MPIEXEC_EXECUTABLE}
+            ${MPIEXEC_NUMPROC_FLAG} 2
+            ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:test_nscf>
+            ${MPIEXEC_POSTFLAGS}
+    )
+    set_tests_properties(
+        fixed_density_nscf_mpi_2ranks
+        PROPERTIES PROCESSORS 2
+    )
+endif()

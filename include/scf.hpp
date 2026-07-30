@@ -3,6 +3,7 @@
 #include "core.hpp"
 #include "eigensolver.hpp"
 #include "scf_modules.hpp"
+#include "symmetry_types.hpp"
 #include "xc_functional.hpp"
 
 #include <Eigen/Dense>
@@ -56,7 +57,13 @@ struct SCFOptions {
     int eigensolver_max_subspace = 0;
     double eigensolver_initial_tolerance = 1.0e-7;
     double eigensolver_tolerance = 1.0e-10;
+    /*
+     * Empty bands use max(5 * strict_tolerance, this value) once
+     * occupations from a preceding SCF iteration are available.
+     */
+    double eigensolver_empty_tolerance = 1.0e-6;
     double eigensolver_denom_floor = 1.0e-6;
+    bool eigensolver_full_band_accuracy = false;
 
     double mixing_alpha = 0.10;
     int pulay_max_history = 6;
@@ -138,6 +145,12 @@ struct KPointSCFInitialGuess {
     std::vector<double> density;
     std::vector<std::vector<double>> spin_densities;
     std::vector<Eigen::MatrixXcd> orbitals;
+    /*
+     * Optional provenance for orbital reuse.  Geometry optimization uses
+     * this to discard orbitals if a changed space group changes the
+     * irreducible k-point representatives while retaining the density.
+     */
+    std::vector<Eigen::Vector3d> orbital_kpoints;
 };
 
 struct KPointSCFResult {
@@ -204,4 +217,5 @@ KPointSCFResult run_kpoint_scf(
     double ion_ion_energy,
     const SCFOptions& options,
     const KPointSCFInitialGuess& initial_guess = {},
-    std::ostream* log_stream = nullptr);
+    std::ostream* log_stream = nullptr,
+    const std::vector<SpaceGroupOperation>& symmetry_operations = {});

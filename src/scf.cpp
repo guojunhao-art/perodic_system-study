@@ -335,6 +335,11 @@ SCFResult run_scf(
     double previous_energy = 0.0;
     double previous_band_energy = 0.0;
     double last_signed_energy_change = 0.0;
+    std::vector<double> previous_occupations =
+        !options.eigensolver_full_band_accuracy &&
+        options.occupation_mode == OccupationMode::Fixed
+        ? options.fixed_occupations
+        : std::vector<double>{};
     const bool logging_enabled =
         log_stream != nullptr && options.verbosity != SCFVerbosity::Silent;
 
@@ -355,6 +360,12 @@ SCFResult run_scf(
         result.performance.input_potential_seconds +=
             elapsed_seconds(phase_start);
 
+        const std::vector<double> band_residual_tolerances =
+            davidson_band_residual_tolerances(
+                options.nbands,
+                eigensolver_tolerance,
+                previous_occupations
+            );
         phase_start = std::chrono::steady_clock::now();
         const DavidsonResult ks = davidson_lowest_eigenstates(
             basis,
@@ -367,11 +378,18 @@ SCFResult run_scf(
             eigensolver_tolerance,
             options.eigensolver_denom_floor,
             projector_ptr,
-            logging_enabled && options.verbosity == SCFVerbosity::Detailed
+            logging_enabled && options.verbosity == SCFVerbosity::Detailed,
+            &band_residual_tolerances
         );
         result.performance.eigensolver_seconds +=
             elapsed_seconds(phase_start);
-        if (!ks.converged) {
+        const DavidsonResidualAssessment residual_assessment =
+            assess_davidson_residuals(
+                ks.residual_norms,
+                band_residual_tolerances,
+                eigensolver_tolerance
+            );
+        if (!ks.converged && !residual_assessment.acceptable) {
             const double maximum_ks_residual =
                 maximum_residual(ks.residual_norms);
             std::ostringstream message;
@@ -385,11 +403,33 @@ SCFResult run_scf(
                 << ", Hpsi applications = "
                 << ks.hamiltonian_applications
                 << ", projected Hermiticity error = "
-                << ks.projected_hermiticity_error;
+                << ks.projected_hermiticity_error
+                << ", strict bands converged = "
+                << (residual_assessment.strict_bands_converged
+                    ? "yes" : "no")
+                << ", worst strict band = "
+                << residual_assessment.worst_strict_band
+                << ", strict-band residual = "
+                << residual_assessment.maximum_strict_residual
+                << ", relaxed-band failures = "
+                << residual_assessment.relaxed_band_failures;
             if (ks.stagnated) {
                 message << ", stopped after repeated stagnation restarts";
             }
             throw std::runtime_error(message.str());
+        }
+        if (!ks.converged && logging_enabled) {
+            *log_stream
+                << "WARNING: accepted "
+                << residual_assessment.relaxed_band_failures
+                << " effectively empty Davidson band(s) above their "
+                << "relaxed target; worst band = "
+                << residual_assessment.worst_relaxed_band
+                << ", residual = "
+                << residual_assessment.maximum_relaxed_residual
+                << ", hard limit = "
+                << residual_assessment.maximum_accepted_relaxed_residual
+                << ".\n";
         }
 
         result.eigensolver_hamiltonian_applications +=
@@ -420,6 +460,11 @@ SCFResult run_scf(
         );
         result.performance.occupations_seconds +=
             elapsed_seconds(phase_start);
+        const bool occupation_refinement_needed =
+            davidson_occupation_refinement_needed(
+                previous_occupations,
+                occupations.occ
+            );
 
         phase_start = std::chrono::steady_clock::now();
         const Eigen::MatrixXcd orbitals =
@@ -540,12 +585,22 @@ SCFResult run_scf(
             );
         }
 
-        const bool outer_converged = iter > 0 &&
+        const bool energy_changes_converged = iter > 0 &&
             scf_energy_changes_converged(
                 signed_dE,
                 signed_band_energy_change,
                 options.energy_tolerance
             );
+        const bool outer_converged =
+            energy_changes_converged &&
+            !occupation_refinement_needed;
+        if (energy_changes_converged &&
+            occupation_refinement_needed &&
+            logging_enabled) {
+            *log_stream
+                << "A previously empty band became occupied; requesting "
+                << "one strict Davidson refinement.\n";
+        }
         if (outer_converged &&
             eigensolver_tolerances.at_final_tolerance()) {
             result.converged = true;
@@ -569,6 +624,9 @@ SCFResult run_scf(
 
         previous_energy = energy_for_convergence;
         previous_band_energy = band_energy;
+        if (!options.eigensolver_full_band_accuracy) {
+            previous_occupations = occupations.occ;
+        }
         C_guess = orbitals;
     }
 

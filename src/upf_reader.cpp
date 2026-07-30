@@ -137,6 +137,40 @@ std::string required_attribute(
     return trim(it->second);
 }
 
+std::string required_one_of_attributes(
+    const Attributes& attributes,
+    const std::vector<std::string>& names,
+    const std::string& tag_name,
+    const std::string& path) {
+
+    for (const std::string& name : names) {
+        const auto it = attributes.find(name);
+        if (it != attributes.end()) {
+            return trim(it->second);
+        }
+    }
+    std::string alternatives;
+    for (const std::string& name : names) {
+        if (!alternatives.empty()) {
+            alternatives += "' or '";
+        }
+        alternatives += name;
+    }
+    throw parse_error(
+        path,
+        "missing attribute '" + alternatives + "' in <" + tag_name + ">"
+    );
+}
+
+std::string optional_attribute(
+    const Attributes& attributes,
+    const std::string& name,
+    const std::string& fallback = {}) {
+
+    const auto it = attributes.find(name);
+    return it == attributes.end() ? fallback : trim(it->second);
+}
+
 double parse_double_token(
     std::string token,
     const std::string& context,
@@ -159,25 +193,47 @@ double parse_double_token(
     }
 }
 
+int parse_int_token(
+    const std::string& token,
+    const std::string& context,
+    const std::string& path) {
+
+    try {
+        std::size_t consumed = 0;
+        const int value = std::stoi(token, &consumed);
+        if (consumed != token.size()) {
+            throw parse_error(
+                path,
+                "invalid integer '" + token + "' in " + context
+            );
+        }
+        return value;
+    } catch (const std::invalid_argument&) {
+        throw parse_error(
+            path,
+            "invalid integer '" + token + "' in " + context
+        );
+    } catch (const std::out_of_range&) {
+        throw parse_error(
+            path,
+            "out-of-range integer '" + token + "' in " + context
+        );
+    }
+}
+
 int parse_int_attribute(
     const Attributes& attributes,
     const std::string& name,
     const std::string& tag_name,
     const std::string& path) {
 
-    const std::string text = required_attribute(attributes, name, tag_name, path);
-    try {
-        std::size_t consumed = 0;
-        const int value = std::stoi(text, &consumed);
-        if (consumed != text.size()) {
-            throw parse_error(path, "invalid integer '" + text + "' in <" + tag_name + ">");
-        }
-        return value;
-    } catch (const std::invalid_argument&) {
-        throw parse_error(path, "invalid integer '" + text + "' in <" + tag_name + ">");
-    } catch (const std::out_of_range&) {
-        throw parse_error(path, "out-of-range integer '" + text + "' in <" + tag_name + ">");
-    }
+    return parse_int_token(
+        required_attribute(
+            attributes, name, tag_name, path
+        ),
+        "<" + tag_name + ">",
+        path
+    );
 }
 
 double parse_double_attribute(
@@ -268,6 +324,9 @@ void validate_supported_header(const UPFHeader& header, const std::string& path)
     }
     if (header.number_of_projectors < 0) {
         throw parse_error(path, "number_of_proj cannot be negative");
+    }
+    if (header.number_of_wavefunctions < 0) {
+        throw parse_error(path, "number_of_wfc cannot be negative");
     }
 }
 
@@ -474,6 +533,98 @@ UPFData read_nc_upf(const std::string& path) {
                 }
             }
         }
+    }
+
+    data.atomic_wavefunctions.reserve(
+        header.number_of_wavefunctions
+    );
+    for (int wavefunction_number = 1;
+         wavefunction_number <= header.number_of_wavefunctions;
+         ++wavefunction_number) {
+        const std::string tag_name =
+            "PP_CHI." + std::to_string(wavefunction_number);
+        const OpeningTag chi_tag =
+            find_opening_tag(document, tag_name, path);
+        const Attributes chi_attributes =
+            parse_attributes(chi_tag);
+
+        UPFAtomicWavefunction wavefunction;
+        wavefunction.index = parse_int_attribute(
+            chi_attributes, "index", tag_name, path
+        );
+        wavefunction.label = required_attribute(
+            chi_attributes, "label", tag_name, path
+        );
+        wavefunction.angular_momentum = parse_int_token(
+            required_one_of_attributes(
+                chi_attributes,
+                {"l", "angular_momentum"},
+                tag_name,
+                path
+            ),
+            "<" + tag_name + ">",
+            path
+        );
+        wavefunction.occupation = parse_double_attribute(
+            chi_attributes, "occupation", tag_name, path
+        );
+        const std::string principal_quantum_number =
+            optional_attribute(chi_attributes, "n");
+        if (!principal_quantum_number.empty()) {
+            wavefunction.principal_quantum_number =
+                parse_int_token(
+                    principal_quantum_number,
+                    "<" + tag_name + ">",
+                    path
+                );
+        }
+        const std::string pseudo_energy =
+            optional_attribute(chi_attributes, "pseudo_energy");
+        if (!pseudo_energy.empty()) {
+            wavefunction.pseudo_energy_ry =
+                parse_double_token(
+                    pseudo_energy, "<" + tag_name + ">", path
+                );
+        }
+        wavefunction.r_times_radial_wavefunction =
+            parse_numeric_field(
+                find_field_contents(document, tag_name, path),
+                tag_name,
+                path
+            );
+
+        if (wavefunction.index != wavefunction_number) {
+            throw parse_error(
+                path, tag_name + " index is not sequential"
+            );
+        }
+        if (wavefunction.angular_momentum < 0 ||
+            (header.l_max >= 0 &&
+             wavefunction.angular_momentum > header.l_max)) {
+            throw parse_error(
+                path, tag_name + " has invalid angular momentum"
+            );
+        }
+        if (!std::isfinite(wavefunction.occupation) ||
+            wavefunction.occupation < 0.0) {
+            throw parse_error(
+                path, tag_name + " has invalid occupation"
+            );
+        }
+        if (wavefunction.r_times_radial_wavefunction.empty() ||
+            static_cast<int>(
+                wavefunction.r_times_radial_wavefunction.size()
+            ) > header.mesh_size) {
+            throw parse_error(
+                path, tag_name + " has an invalid radial-array length"
+            );
+        }
+        wavefunction.r_times_radial_wavefunction.resize(
+            header.mesh_size, 0.0
+        );
+        data.atomic_wavefunctions.push_back(
+            std::move(wavefunction)
+        );
     }
 
     return data;

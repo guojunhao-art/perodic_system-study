@@ -1,23 +1,22 @@
-calculation = bands
+calculation = nscf
 structure = POSCAR_Si_diamond
 pseudo = Si ../pseudopotentials/Si.pz-vbc.UPF
 xc = pz_lda
 
-# This uniform mesh determines the self-consistent density.
-kpoints = gamma 6 6 6
+# Read the converged density written by si_checkpoint_scf.in. A band path is
+# a fixed-density NSCF calculation and does not determine a new Fermi level.
+checkpoint_input = si.scf.chk
 ecut_ha = auto
 fft_grid = auto
 fft_threads = auto
 nelect = auto
-nbands = 8
+nbands = 12
 nspin = 1
 occupations = zero_t
 
-scf_max_iterations = 150
-energy_tolerance_ha = 1.0e-7
-eigensolver_initial_tolerance_ha = 1.0e-7
-eigensolver_tolerance_ha = 2.0e-10
-mixing_alpha = 0.15
+eigensolver_max_iterations = 150
+eigensolver_tolerance_ha = 1.0e-9
+eigensolver_empty_tolerance_ha = 1.0e-6
 verbosity = compact
 
 # FCC high-symmetry coordinates in the primitive reciprocal basis.

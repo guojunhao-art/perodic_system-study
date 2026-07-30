@@ -80,14 +80,26 @@ int main(int argc, char** argv) {
                 }
                 if (nscf.band_path) {
                     if (parallel::is_root()) {
-                        write_band_structure(
-                            config.bands.output_path,
-                            nscf
-                        );
-                        std::cout
-                            << "  NSCF band structure written to "
-                            << config.bands.output_path
-                            << "\n";
+                        if (!config.bands.output_path.empty()) {
+                            write_band_structure(
+                                config.bands.output_path,
+                                nscf
+                            );
+                            std::cout
+                                << "  NSCF band structure written to "
+                                << config.bands.output_path
+                                << "\n";
+                        }
+                        if (!config.bands.projection_output_path.empty()) {
+                            write_fat_band_structure(
+                                config.bands.projection_output_path,
+                                nscf
+                            );
+                            std::cout
+                                << "  NSCF fat bands written to "
+                                << config.bands.projection_output_path
+                                << "\n";
+                        }
                     }
                     return 0;
                 }

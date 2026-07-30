@@ -26,3 +26,7 @@ struct NSCFResult;
 void write_band_structure(
     const std::string& path,
     const NSCFResult& result);
+
+void write_fat_band_structure(
+    const std::string& path,
+    const NSCFResult& result);

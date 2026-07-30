@@ -38,6 +38,20 @@ void require_close(
 
 int main() {
     try {
+        const RealHarmonicDescriptor px =
+            describe_real_harmonic(1, 1);
+        const RealHarmonicDescriptor dxy =
+            describe_real_harmonic(2, 4);
+        require(
+            px.absolute_m == 1 &&
+            px.branch == "cos" &&
+            px.orbital_name == "px" &&
+            dxy.absolute_m == 2 &&
+            dxy.branch == "sin" &&
+            dxy.orbital_name == "dxy",
+            "QE real-harmonic descriptor mapping"
+        );
+
         const UPFData upf = read_nc_upf(
             (std::filesystem::path(TEST_DATA_DIR)
              / "minimal_local_nc.upf").string()
@@ -145,6 +159,24 @@ int main() {
             1.0e-12,
             "Integrated one-orbital PDOS"
         );
+        require_close(
+            pdos.full_projected_state_weight,
+            2.0,
+            1.0e-12,
+            "Full projected state weight"
+        );
+        require_close(
+            pdos.analytic_projected_states_in_window,
+            2.0,
+            1.0e-12,
+            "Analytic PDOS energy-window integral"
+        );
+        require_close(
+            pdos.numerical_projected_states_in_window,
+            pdos.analytic_projected_states_in_window,
+            1.0e-11,
+            "Numerical PDOS quadrature self-check"
+        );
 
         const std::filesystem::path output_path =
             std::filesystem::temp_directory_path()
@@ -159,8 +191,12 @@ int main() {
             text.str().find("Löwdin projected density") !=
                 std::string::npos &&
             text.str().find("occupied_spilling") !=
+                std::string::npos &&
+            text.str().find(
+                "numerical_minus_analytic_projected_states"
+            ) !=
                 std::string::npos,
-            "PDOS output header mismatch"
+            "PDOS output header or integral diagnostics mismatch"
         );
         std::filesystem::remove(output_path);
 

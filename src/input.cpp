@@ -517,7 +517,8 @@ CalculationConfig read_calculation_config(const std::string& path) {
                     "calculation = " + calculation
                     + " has been removed. Run calculation = scf (or relax) "
                       "to write checkpoint_output, then use calculation = "
-                      "nscf with bands_output, dos_output, or pdos_output."
+                      "nscf with bands_output, fatbands_output, dos_output, "
+                      "or pdos_output."
                 );
             } else {
                 throw std::runtime_error(
@@ -709,6 +710,8 @@ CalculationConfig read_calculation_config(const std::string& path) {
                 parse_integer(value, key);
         } else if (key == "bands_output") {
             config.bands.output_path = value;
+        } else if (key == "fatbands_output") {
+            config.bands.projection_output_path = value;
         } else if (key == "dos_smearing_ev") {
             config.dos.smearing_ev = parse_double(value, key);
         } else if (key == "dos_points") {
@@ -913,6 +916,8 @@ CalculationConfig read_calculation_config(const std::string& path) {
     const bool has_band_path = !config.bands.path.empty();
     const bool requests_bands =
         !trim(config.bands.output_path).empty();
+    const bool requests_fatbands =
+        !trim(config.bands.projection_output_path).empty();
     const bool requests_dos =
         !trim(config.dos.output_path).empty();
     const bool requests_pdos =
@@ -946,10 +951,12 @@ CalculationConfig read_calculation_config(const std::string& path) {
                 "calculation = nscf requires checkpoint_input."
             );
         }
-        if (!requests_bands && !requests_dos && !requests_pdos) {
+        if (!requests_bands && !requests_fatbands &&
+            !requests_dos && !requests_pdos) {
             throw std::runtime_error(
                 "calculation = nscf requires at least one of "
-                "bands_output, dos_output, or pdos_output."
+                "bands_output, fatbands_output, dos_output, or "
+                "pdos_output."
             );
         }
         if (has_band_path) {
@@ -959,9 +966,10 @@ CalculationConfig read_calculation_config(const std::string& path) {
                     "band_point lines."
                 );
             }
-            if (!requests_bands) {
+            if (!requests_bands && !requests_fatbands) {
                 throw std::runtime_error(
-                    "NSCF band_point lines require bands_output."
+                    "NSCF band_point lines require bands_output or "
+                    "fatbands_output."
                 );
             }
             if (requests_dos || requests_pdos) {
@@ -970,9 +978,10 @@ CalculationConfig read_calculation_config(const std::string& path) {
                     "PDOS. Use a separate uniform-grid NSCF input."
                 );
             }
-        } else if (requests_bands) {
+        } else if (requests_bands || requests_fatbands) {
             throw std::runtime_error(
-                "bands_output requires at least two band_point lines."
+                "bands_output and fatbands_output require at least two "
+                "band_point lines."
             );
         }
         if (requests_pdos && config.kpoint_symmetry.enabled) {
@@ -981,10 +990,11 @@ CalculationConfig read_calculation_config(const std::string& path) {
                 "kpoint_symmetry = off."
             );
         }
-    } else if (has_band_path || requests_bands ||
+    } else if (has_band_path || requests_bands || requests_fatbands ||
                requests_dos || requests_pdos) {
         throw std::runtime_error(
-            "DOS, PDOS, and band outputs are available only through "
+            "DOS, PDOS, band, and fat-band outputs are available only "
+            "through "
             "calculation = nscf with checkpoint_input."
         );
     }

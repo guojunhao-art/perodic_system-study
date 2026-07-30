@@ -26,6 +26,21 @@ struct AtomicProjectionOrbital {
     int real_harmonic_index = -1;
 };
 
+struct RealHarmonicDescriptor {
+    int absolute_m = -1;
+    std::string branch;
+    std::string orbital_name;
+};
+
+/*
+ * Describe the QE ylmr2 real-harmonic ordering.  For |m| > 0 the real
+ * cos/sin functions are linear combinations of complex +/-m eigenfunctions,
+ * so absolute_m is reported rather than a signed magnetic quantum number.
+ */
+RealHarmonicDescriptor describe_real_harmonic(
+    int angular_momentum,
+    int real_harmonic_index);
+
 struct AtomicProjectionSpecies {
     std::string element;
     std::vector<double> radial_grid_bohr;
@@ -93,6 +108,10 @@ struct ProjectedDensityOfStatesResult {
     double fermi_energy_ha = 0.0;
     double gaussian_sigma_ha = 0.0;
     double occupied_spilling = 0.0;
+    double full_projected_state_weight = 0.0;
+    double analytic_projected_states_in_window = 0.0;
+    double numerical_projected_states_in_window = 0.0;
+    double numerical_minus_analytic_projected_states = 0.0;
     AtomicProjectionResult projection;
     std::vector<double> energies_ha;
     std::vector<ProjectedDensityOfStatesChannel> channels;

@@ -816,7 +816,7 @@ AtomicProjectionResult compute_nscf_projections(
                         hamiltonians[ik].basis.size()) {
                     throw std::runtime_error(
                         "The owning MPI rank does not retain the NSCF "
-                        "eigenvectors needed for PDOS."
+                        "eigenvectors needed for atomic projections."
                     );
                 }
                 const Eigen::MatrixXd weights =
@@ -853,12 +853,12 @@ AtomicProjectionResult compute_nscf_projections(
         }
     } catch (const std::exception& error) {
         local_error =
-            "PDOS projection failed on MPI rank "
+            "Atomic projection failed on MPI rank "
             + std::to_string(distribution.rank())
             + ": " + error.what();
     } catch (...) {
         local_error =
-            "PDOS projection failed with an unknown exception on MPI rank "
+            "Atomic projection failed with an unknown exception on MPI rank "
             + std::to_string(distribution.rank()) + ".";
     }
     const std::string error =
@@ -939,6 +939,10 @@ NSCFResult run_fixed_density_nscf(
         !config.bands.path.empty();
     const bool requests_pdos =
         !config.pdos.output_path.empty();
+    const bool requests_fatbands =
+        !config.bands.projection_output_path.empty();
+    const bool requests_projection =
+        requests_pdos || requests_fatbands;
     if (band_path &&
         (!config.dos.output_path.empty() ||
          requests_pdos)) {
@@ -952,7 +956,11 @@ NSCFResult run_fixed_density_nscf(
             "PDOS currently requires kpoint_symmetry = off."
         );
     }
-
+    if (requests_fatbands && !band_path) {
+        throw std::runtime_error(
+            "fatbands_output requires a high-symmetry NSCF band path."
+        );
+    }
     const Lattice lattice(
         structure.lattice_bohr.col(0),
         structure.lattice_bohr.col(1),
@@ -997,7 +1005,7 @@ NSCFResult run_fixed_density_nscf(
         projection_species;
     local_species.reserve(upfs.size());
     nonlocal_species.reserve(upfs.size());
-    if (requests_pdos) {
+    if (requests_projection) {
         projection_species.reserve(upfs.size());
     }
     for (const UPFData& upf : upfs) {
@@ -1009,7 +1017,7 @@ NSCFResult run_fixed_density_nscf(
         nonlocal_species.push_back(
             prepare_upf_nonlocal_species(upf)
         );
-        if (requests_pdos) {
+        if (requests_projection) {
             projection_species.push_back(
                 prepare_atomic_projection_species(upf)
             );
@@ -1264,7 +1272,7 @@ NSCFResult run_fixed_density_nscf(
     }
 
     AtomicProjectionResult projection;
-    if (requests_pdos) {
+    if (requests_projection) {
         projection = compute_nscf_projections(
             lattice,
             hamiltonians,

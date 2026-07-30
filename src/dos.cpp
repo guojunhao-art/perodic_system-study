@@ -192,6 +192,11 @@ DensityOfStatesResult compute_density_of_states(
         (result.energy_max_ha - result.energy_min_ha)
         / static_cast<double>(dos_options.points - 1);
     const double spin_degeneracy = result.nspin == 1 ? 2.0 : 1.0;
+    for (const KPointElectronicState& state : scf.kpoints) {
+        result.expected_total_states +=
+            spin_degeneracy * state.weight
+            * static_cast<double>(result.nbands);
+    }
     for (int point = 0; point < dos_options.points; ++point) {
         DensityOfStatesSample& sample = result.samples[point];
         sample.energy_ha =
@@ -220,6 +225,18 @@ DensityOfStatesResult compute_density_of_states(
                 sample.integrated_spin[spin];
         }
     }
+    result.analytic_states_in_window =
+        result.samples.back().integrated_total
+        - result.samples.front().integrated_total;
+    for (int point = 1; point < dos_options.points; ++point) {
+        result.numerical_states_in_window +=
+            0.5 * spacing
+            * (result.samples[point - 1].total_per_ha
+               + result.samples[point].total_per_ha);
+    }
+    result.numerical_minus_analytic_states =
+        result.numerical_states_in_window
+        - result.analytic_states_in_window;
     return result;
 }
 
@@ -258,7 +275,19 @@ void write_density_of_states(
         << result.gaussian_sigma_ha * HARTREE_TO_EV << "\n"
         << "# nspin = " << result.nspin << "\n"
         << "# nbands = " << result.nbands << "\n"
-        << "# irreducible_kpoints = " << result.kpoint_count << "\n";
+        << "# irreducible_kpoints = " << result.kpoint_count << "\n"
+        << "# expected_total_states = "
+        << result.expected_total_states << "\n"
+        << "# analytic_states_in_energy_window = "
+        << result.analytic_states_in_window << "\n"
+        << "# numerical_states_in_energy_window = "
+        << result.numerical_states_in_window << "\n"
+        << "# numerical_minus_analytic_states = "
+        << result.numerical_minus_analytic_states << "\n"
+        << "# states_outside_energy_window = "
+        << result.expected_total_states
+            - result.analytic_states_in_window
+        << "\n";
     if (result.nspin == 1) {
         output
             << "# columns: energy_ha energy_ev "

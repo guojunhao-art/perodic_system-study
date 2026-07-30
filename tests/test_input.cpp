@@ -276,7 +276,9 @@ int main() {
         );
         require_true(
             bands_config.bands.points_per_segment == 7 &&
-            bands_config.bands.output_path == "test-bands.dat",
+            bands_config.bands.output_path == "test-bands.dat" &&
+            bands_config.bands.projection_output_path ==
+                "test-fatbands.dat",
             "band output-control parsing mismatch"
         );
 

@@ -28,7 +28,8 @@ spin--orbit coupling），并使用 Hartree 原子单位。代码保留了许多
 - POSCAR 结构解析、独立计算参数文件和通用多 k 点单点驱动；
 - 固定晶胞 BFGS 离子弛豫、`Selective dynamics`、SCF 热启动和结构轨迹输出；
 - 可持久化自洽密度 checkpoint，以及统一的 fixed-density `nscf` 谱性质入口；
-- 高对称路径 NSCF 能带，以及密集网格 Gaussian 总 DOS/积分 DOS/分自旋输出；
+- 高对称路径 NSCF 能带与逐原子/实球谐 fat band，以及密集网格 Gaussian 总
+  DOS/积分 DOS/分自旋输出；
 - 基于 UPF `PP_PSWFC` 和 Löwdin 正交化原子轨道的逐原子、逐 $l,m$ PDOS；
 - `upf_info` 文件及局域势检查工具。
 
@@ -492,7 +493,8 @@ $$
 
 NSCF 输入由输出请求自动分为两种互斥模式：
 
-- 存在 `band_point`：高对称路径，只允许 `bands_output`；
+- 存在 `band_point`：高对称路径，允许 `bands_output`、`fatbands_output`
+  或二者同时出现；
 - 不存在 `band_point`：均匀或显式带权网格，允许 `dos_output`、`pdos_output`
   或二者同时出现。
 
@@ -513,6 +515,7 @@ band_point = K 0.375 0.375 0.750
 band_point = G 0.000 0.000 0.000
 band_point = L 0.500 0.500 0.500
 bands_output = si_bands.dat
+fatbands_output = si_fatbands.dat
 ```
 
 完整示例：
@@ -533,6 +536,11 @@ $$
 单位为 Bohr$^{-1}$。路径没有合法的布里渊区积分权重，因此程序不会用它重新确定
 费米能，而是以 checkpoint 的 SCF 费米能为绘图参考。输出为长格式，包含路径
 索引、倒空间距离、$k$ 坐标、自旋、能带、本征值和 Davidson 残差。
+
+`fatbands_output` 将同一套 `PP_PSWFC` + Löwdin 投影复用于路径波函数，并输出
+逐原子、逐径向波函数和逐实球谐通道的
+$P_{\mu n\mathbf k\sigma}$。文件采用长格式，可按元素、原子、$l$ 或轨道名聚合
+成线宽/颜色。高对称路径本身逐点显式求解，不进行不可约 $k$ 点约化。
 
 路径插值与 NSCF band 文件格式可单独回归：
 
@@ -592,6 +600,16 @@ dos_output = si_nscf_dos.dat
 与决定 SCF 占据的 `smearing_ev` 相互独立。输出中的 DOS 单位为 states/eV，
 积分 DOS 单位为 states；文件同时保留绝对能量（Ha、eV）和相对费米能（eV）。
 自旋极化计算额外输出 `dos_up`、`dos_down` 及各自积分列。
+
+文件头还给出三组积分诊断：
+
+- `expected_total_states`：由 `nbands`、自旋简并和归一化 $k$ 点权重得到的完整
+  已求解态数；
+- `analytic_states_in_energy_window`：用 Gaussian CDF 精确计算的输出能窗内态数；
+- `numerical_states_in_energy_window`：对实际输出的离散 DOS 作梯形积分得到的态数。
+
+`states_outside_energy_window` 反映能窗截断，不能通过加密 `dos_points` 消除；
+`numerical_minus_analytic_states` 则直接检查能量网格是否足以积分当前展宽峰。
 
 DOS 的导带范围由 `nbands` 决定，不能通过增大 `dos_energy_max_ev` 凭空产生未求解
 的高能态；若目标窗口截断，应先增加 `nbands`。谱线平滑程度主要由 k 点网格和
@@ -675,8 +693,16 @@ $k$ 点乘星权重不能正确恢复一般的逐原子、逐 $m$ 投影；后�
 实球谐函数的旋转后才能安全约化。
 
 `pdos_output` 使用长格式，每行给出能量、原子、元素、`PP_CHI` 标签、$l$、QE
-实球谐序号、自旋、PDOS 和积分 PDOS。可按原子、元素、标签或 $l$ 自由分组。
+实球谐序号、$|m|$、cos/sin 分支、轨道名、自旋、PDOS 和积分 PDOS。可按原子、
+元素、标签、$l$ 或具体轨道自由分组。QE 实球谐顺序中的 $p$ 分量对应
+$p_z,-p_x,-p_y$；整体负号不改变投影权重。对于 $|m|>0$，实球谐是复球谐
+$m=\pm|m|$ 的线性组合，并非带符号 $m$ 的 $L_z$ 本征态，因此输出写作
+`m_abs` 与 `cos/sin`，而不伪造 signed-$m$。
 Löwdin 重叠矩阵的最小/最大本征值、正交误差和 occupied spilling 写入文件头。
+PDOS 文件还以 `full_projected_state_weight` 为解析基准，分别报告能窗内解析积分、
+离散梯形积分及其差值。该基准是所有
+$P_{\mu n\mathbf k\sigma}$ 的带权和，并不应被强制改成总 DOS 态数；二者的差异
+正是有限原子轨道子空间未覆盖的部分。
 若
 
 $$

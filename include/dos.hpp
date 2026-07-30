@@ -22,6 +22,10 @@ struct DensityOfStatesResult {
     double gaussian_sigma_ha = 0.0;
     double energy_min_ha = 0.0;
     double energy_max_ha = 0.0;
+    double expected_total_states = 0.0;
+    double analytic_states_in_window = 0.0;
+    double numerical_states_in_window = 0.0;
+    double numerical_minus_analytic_states = 0.0;
     std::vector<DensityOfStatesSample> samples;
 };
 

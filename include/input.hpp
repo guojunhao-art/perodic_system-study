@@ -88,6 +88,7 @@ struct BandStructureOptions {
      */
     int points_per_segment = 20;
     std::string output_path;
+    std::string projection_output_path;
 };
 
 struct DensityOfStatesOptions {

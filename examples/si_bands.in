@@ -28,3 +28,4 @@ band_point = K 0.375 0.375 0.750
 band_point = G 0.000 0.000 0.000
 band_point = L 0.500 0.500 0.500
 bands_output = si_bands.dat
+fatbands_output = si_fatbands.dat

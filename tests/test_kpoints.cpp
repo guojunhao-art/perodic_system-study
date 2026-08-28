@@ -598,6 +598,38 @@ void test_gamma_wrapper_equivalence() {
     }
     require_close(maximum_density_error, 0.0, 1.0e-11,
                   "Gamma generalized/legacy density");
+
+    SCFOptions pbe_options = options;
+    pbe_options.xc_functional =
+        XCFunctional::PerdewBurkeErnzerhof;
+    FFTWorkspace pbe_legacy_fft(grid);
+    const SCFResult pbe_legacy = run_scf(
+        lattice,
+        basis,
+        pbe_legacy_fft,
+        zero_potential,
+        0.0,
+        {},
+        pbe_options
+    );
+    FFTWorkspace pbe_kpoint_fft(grid);
+    const KPointSCFResult pbe_generalized = run_kpoint_scf(
+        lattice,
+        {gamma},
+        pbe_kpoint_fft,
+        zero_potential,
+        0.0,
+        pbe_options
+    );
+    if (!pbe_legacy.converged || !pbe_generalized.converged) {
+        throw std::runtime_error("PBE Gamma equivalence SCF did not converge.");
+    }
+    require_close(
+        pbe_generalized.variational_energy,
+        pbe_legacy.variational_energy,
+        1.0e-11,
+        "PBE Gamma generalized/legacy energy"
+    );
 }
 
 } // namespace

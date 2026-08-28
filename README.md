@@ -11,7 +11,7 @@ spin--orbit coupling），并使用 Hartree 原子单位。代码保留了许多
 - Bloch 多 k 点平面波基组、FFT-based $H\psi$ 和可选的 k 点级 MPI 并行；
 - Gamma-centered、Monkhorst–Pack 和显式带权 k 点输入；
 - 所有 k 点和自旋通道共享化学势的零温/Fermi–Dirac 占据及带权密度、能量和力；
-- LibXC 非磁性/共线自旋极化 LDA exchange + Perdew–Zunger correlation SCF；
+- LibXC 非磁性 PZ-LDA/PBE-GGA，以及共线自旋极化 PZ-LDA SCF；
 - fixed、简并感知零温和 Fermi–Dirac 占据；
 - 随外层密度残差自动收紧、占据数感知并在退出前精修占据带的 Davidson 容差；
 - 线性/自适应辅助函数和 Pulay density mixing；
@@ -170,10 +170,21 @@ curl -L \
   https://pseudopotentials.quantum-espresso.org/upf_files/Si.pz-vbc.UPF \
   -o pseudopotentials/Si.pz-vbc.UPF
 
+# PBE norm-conserving smoke-test dataset (legacy HGH table).
+curl -L \
+  https://pseudopotentials.quantum-espresso.org/upf_files/Si.pbe-hgh.UPF \
+  -o pseudopotentials/Si.pbe-hgh.UPF
+
 make upf_info
 ./upf_info pseudopotentials/Si.pz-vbc.UPF
 ./upf_info pseudopotentials/Si.pz-vbc.UPF 0.70
 ```
+
+`Si.pbe-hgh.UPF` 的 SHA-256 为
+`bba3d3ca4f15dd2709da6d0feea94c55ebc94e6cfd5028ec6396c8c21d09328f`；它是
+QE legacy HGH 表中的 PBE、NC、scalar-relativistic、无 NLCC 数据，适合运行
+`./pwdft examples/si_pbe_scf.in` 做功能测试。该表的分类未经验证，定量结果应改用
+经过系统验证的赝势并重新收敛 cutoff 与 k 点。
 
 `upf_info` 会打印实际读取到的元素、泛函、径向网格、projector 的 $l$ 和
 `PP_DIJ`，并同时显示 Ry 与 Ha 单位的矩阵。给出第二个参数时，它还会用指定的
@@ -181,8 +192,8 @@ Gaussian 宽度（Bohr）构造局域势，打印短程尾部和若干 $G$ 点�
 
 主程序优先采用输入文件中的 `ecut_ha`；若设为 `auto`，则读取所有 UPF 的
 `wfc_cutoff` 并取最大值（从 Ry 换算为 Ha），旧赝势没有有效建议值时默认使用
-10 Ha。当前固定使用 LibXC PZ-LDA，并主动拒绝泛函标签中不含 `PZ` 的赝势，避免
-电子泛函与生成赝势所用泛函静默混用。
+10 Ha。`xc = pz_lda` 要求 UPF 泛函标签包含 `PZ`；`xc = pbe` 要求包含 `PBE`
+或常见的 `PBX/PBC` 分量标签，避免电子泛函与生成赝势所用泛函静默混用。
 
 ### 1.2 POSCAR 与通用单点输入
 
@@ -205,6 +216,7 @@ make pwdft
 structure = POSCAR
 pseudo = Si pseudopotentials/Si.pz-vbc.UPF
 pseudo = H  pseudopotentials/H.pz-vbc.UPF
+xc = pz_lda
 ecut_ha = 10.0
 fft_grid = auto
 fft_threads = auto
@@ -1079,7 +1091,7 @@ V_{\mathrm{xc},p}
 \bigg|_{n=n_p}.
 $$
 
-为了匹配 `*.pz-*.UPF`，当前选择：
+为了匹配 `*.pz-*.UPF`，PZ-LDA 选择：
 
 - `XC_LDA_X`：Slater/Dirac LDA exchange；
 - `XC_LDA_C_PZ`：Perdew–Zunger LDA correlation。
@@ -1090,9 +1102,45 @@ $v_{\mathrm{xc},\uparrow}$ 和 $v_{\mathrm{xc},\downarrow}$。LibXC 要求输入
 非负，因此进入库前只应清理数值噪声导致的微小负值，而不能用 density floor
 改变正常低密度区域。
 上述解析 exchange 仍保留为单元测试 oracle；它不再是 SCF 的生产路径。
-`SCFOptions::lda_functional` 默认选择 `PerdewZunger`，也可选择
+`SCFOptions::xc_functional` 默认选择 `PerdewZunger`，也可选择
 `ExchangeOnly` 做回归比较。LibXC functional 对象在一次 SCF 开始前初始化，
 随后跨迭代复用，而不是对每个网格点重复初始化。
+
+非自旋极化 PBE 使用 `XC_GGA_X_PBE + XC_GGA_C_PBE`。周期密度展开为
+
+$$
+n(\mathbf r)=\sum_{\mathbf G}n(\mathbf G)e^{i\mathbf G\cdot\mathbf r},
+\qquad
+\nabla n(\mathbf r)=\sum_{\mathbf G}i\mathbf G n(\mathbf G)
+e^{i\mathbf G\cdot\mathbf r}.
+$$
+
+程序先对实空间密度做一次 forward FFT，并除以 $N_{\rm grid}$ 得到 Fourier
+级数系数；三个 $iG_\alpha n(\mathbf G)$ 用 batched inverse FFT 同时变回
+笛卡尔梯度。对偶数网格，每个晶格坐标方向的 Nyquist 频率在微分算子中置零，
+再通过 $\mathbf B=2\pi\mathbf A^{-T}$ 转换为笛卡尔方向，因此斜晶胞仍保持
+Hermitian 对称和离散分部积分关系。
+
+LibXC 的 GGA 输入为
+
+$$
+\sigma(\mathbf r)=|\nabla n(\mathbf r)|^2,
+$$
+
+返回 $v_\rho=\partial(n\varepsilon_{\rm xc})/\partial n$ 和
+$v_\sigma=\partial(n\varepsilon_{\rm xc})/\partial\sigma$。真正进入局域
+Hamiltonian 的势是
+
+$$
+v_{\rm xc}(\mathbf r)=v_\rho(\mathbf r)-
+\nabla\cdot\left[2v_\sigma(\mathbf r)\nabla n(\mathbf r)\right].
+$$
+
+梯度和散度使用同一个离散频谱算子；单元测试直接验证
+$\delta E_{\rm xc}=\Delta V\sum_p v_{{\rm xc},p}\delta n_p$，而不只检查
+LibXC 输出是否有限。当前 PBE 限于 `nspin = 1`、固定晶胞和无 NLCC；自旋 PBE、
+GGA stress 与 NLCC 显式 XC 力留给后续实现。SCF checkpoint v2 保存通用
+`xc_functional`，同时仍可读取旧的 PZ-LDA checkpoint v1。
 
 LibXC 的 `exc` 是每粒子能量，而 `vrho` 是单位体积能量对密度的一阶导数；
 不要把 `exc` 直接当成势。参考
@@ -1727,7 +1775,9 @@ UPF 格式和字段定义参考
 2. 用相同 NC-UPF、cutoff、FFT 网格和 $k$ 点分别对 Si、H 原子与 O₂ 做
    Quantum ESPRESSO 交叉验证，覆盖总能、占据能带、力和磁矩；
 3. 为共线自旋总能量补充真实 UPF 的三维全 SCF 力有限差分；
-4. 在现有能带工作流之后增加总态密度、分波态密度和自旋分辨态密度输出；
-5. 在 LDA 能量、力和多 $k$ 点链路完成交叉验证后接入 LibXC PBE/GGA；
+4. 为现有非自旋 PBE 补充 Quantum ESPRESSO 总能/力交叉验证，再实现
+   $n_{\rm spin}=2$ 的三个 $\sigma$ 分量与自旋 PBE 势；
+5. 增加 CUBE 电荷密度/势输出和局部轨道坐标旋转，方便检查实空间结果与畸变
+   配位环境中的 orbital-resolved PDOS；
 6. 最后实现应力张量和变晶胞优化，避免在固定晶胞链路尚未系统验证时同时引入
    晶格自由度。

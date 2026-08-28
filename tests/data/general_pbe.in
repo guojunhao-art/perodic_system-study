@@ -1,0 +1,13 @@
+calculation = scf
+structure = POSCAR_direct_selective
+pseudo = Si minimal_sp_nc.upf
+pseudo = H minimal_local_nc.upf
+xc = pbe
+kpoints = gamma
+kpoint_symmetry = off
+
+ecut_ha = 10.0
+nelect = auto
+nbands = 4
+nspin = 1
+occupations = zero_t

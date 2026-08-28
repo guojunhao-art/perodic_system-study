@@ -67,8 +67,8 @@ int main(int argc, char** argv) {
         checkpoint.fft_grid = {{12, 12, 12}};
         checkpoint.nspin = 1;
         checkpoint.nelect = 1.0;
-        checkpoint.lda_functional =
-            LDAFunctional::PerdewZunger;
+        checkpoint.xc_functional =
+            XCFunctional::PerdewZunger;
         checkpoint.ewald_width_bohr = 0.70;
         checkpoint.fermi_energy_ha = -0.10;
         checkpoint.pseudopotentials["H"] =

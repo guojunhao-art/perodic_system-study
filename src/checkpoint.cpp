@@ -12,7 +12,8 @@
 namespace {
 
 constexpr const char* checkpoint_magic = "PWDFT_SCF_CHECKPOINT";
-constexpr int current_checkpoint_version = 1;
+constexpr int current_checkpoint_version = 2;
+constexpr int legacy_lda_checkpoint_version = 1;
 constexpr double metadata_tolerance = 1.0e-10;
 
 void require_key(
@@ -63,7 +64,8 @@ std::size_t checked_grid_size(const std::array<int, 3>& dimensions) {
 }
 
 void validate_checkpoint_contents(const SCFCheckpoint& checkpoint) {
-    if (checkpoint.format_version != current_checkpoint_version) {
+    if (checkpoint.format_version != current_checkpoint_version &&
+        checkpoint.format_version != legacy_lda_checkpoint_version) {
         throw std::runtime_error(
             "Unsupported SCF checkpoint format version "
             + std::to_string(checkpoint.format_version) + "."
@@ -90,8 +92,10 @@ void validate_checkpoint_contents(const SCFCheckpoint& checkpoint) {
             "The SCF checkpoint contains invalid electronic metadata."
         );
     }
-    if (checkpoint.lda_functional != LDAFunctional::ExchangeOnly &&
-        checkpoint.lda_functional != LDAFunctional::PerdewZunger) {
+    if (checkpoint.xc_functional != XCFunctional::ExchangeOnly &&
+        checkpoint.xc_functional != XCFunctional::PerdewZunger &&
+        checkpoint.xc_functional !=
+            XCFunctional::PerdewBurkeErnzerhof) {
         throw std::runtime_error(
             "The SCF checkpoint contains an unknown XC functional."
         );
@@ -182,7 +186,7 @@ SCFCheckpoint make_scf_checkpoint(
     checkpoint.fft_grid = result.fft_grid;
     checkpoint.nspin = result.options_used.nspin;
     checkpoint.nelect = result.options_used.nelec;
-    checkpoint.lda_functional = result.options_used.lda_functional;
+    checkpoint.xc_functional = result.options_used.xc_functional;
     checkpoint.ewald_width_bohr = config.ewald_width_bohr;
     checkpoint.fermi_energy_ha = result.scf.occupations.mu;
     checkpoint.spin_densities = result.scf.spin_densities;
@@ -228,8 +232,8 @@ void write_scf_checkpoint(
         << checkpoint.fft_grid[2] << "\n"
         << "nspin " << checkpoint.nspin << "\n"
         << "nelect " << checkpoint.nelect << "\n"
-        << "lda_functional "
-        << static_cast<int>(checkpoint.lda_functional) << "\n"
+        << "xc_functional "
+        << static_cast<int>(checkpoint.xc_functional) << "\n"
         << "ewald_width_bohr " << checkpoint.ewald_width_bohr << "\n"
         << "fermi_energy_ha " << checkpoint.fermi_energy_ha << "\n"
         << "lattice_bohr";
@@ -303,7 +307,8 @@ SCFCheckpoint read_scf_checkpoint(const std::string& path) {
             path + ": not a PWDFT SCF checkpoint."
         );
     }
-    if (checkpoint.format_version != current_checkpoint_version) {
+    if (checkpoint.format_version != current_checkpoint_version &&
+        checkpoint.format_version != legacy_lda_checkpoint_version) {
         throw std::runtime_error(
             path + ": unsupported SCF checkpoint format version "
             + std::to_string(checkpoint.format_version) + "."
@@ -325,11 +330,17 @@ SCFCheckpoint read_scf_checkpoint(const std::string& path) {
     }
     require_key(input, "nelect", path);
     input >> checkpoint.nelect;
-    require_key(input, "lda_functional", path);
+    require_key(
+        input,
+        checkpoint.format_version == legacy_lda_checkpoint_version
+            ? "lda_functional"
+            : "xc_functional",
+        path
+    );
     int functional = 0;
     input >> functional;
-    checkpoint.lda_functional =
-        static_cast<LDAFunctional>(functional);
+    checkpoint.xc_functional =
+        static_cast<XCFunctional>(functional);
     require_key(input, "ewald_width_bohr", path);
     input >> checkpoint.ewald_width_bohr;
     require_key(input, "fermi_energy_ha", path);
@@ -475,7 +486,7 @@ void validate_scf_checkpoint(
             "SCF checkpoint electron count differs from the NSCF input."
         );
     }
-    if (config.scf.lda_functional != checkpoint.lda_functional) {
+    if (config.scf.xc_functional != checkpoint.xc_functional) {
         throw std::runtime_error(
             "SCF checkpoint XC functional differs from the NSCF input."
         );

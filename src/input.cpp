@@ -809,9 +809,21 @@ CalculationConfig read_calculation_config(const std::string& path) {
         } else if (key == "xc") {
             std::string functional = lowercase(value);
             std::replace(functional.begin(), functional.end(), '-', '_');
-            if (functional != "pz_lda" && functional != "lda_pz") {
+            if (functional == "pz_lda" || functional == "lda_pz") {
+                config.scf.xc_functional =
+                    XCFunctional::PerdewZunger;
+            } else if (functional == "pbe" ||
+                       functional == "pbe_gga" ||
+                       functional == "gga_pbe") {
+                config.scf.xc_functional =
+                    XCFunctional::PerdewBurkeErnzerhof;
+            } else if (functional == "lda_x" ||
+                       functional == "exchange_only") {
+                config.scf.xc_functional =
+                    XCFunctional::ExchangeOnly;
+            } else {
                 throw std::runtime_error(
-                    "Only xc = pz_lda is implemented."
+                    "xc must be pz_lda, pbe, or lda_x."
                 );
             }
         } else {
@@ -886,6 +898,13 @@ CalculationConfig read_calculation_config(const std::string& path) {
     }
     if (config.scf.nspin != 1 && config.scf.nspin != 2) {
         throw std::runtime_error("nspin must be 1 or 2.");
+    }
+    if (config.scf.nspin == 2 &&
+        config.scf.xc_functional ==
+            XCFunctional::PerdewBurkeErnzerhof) {
+        throw std::runtime_error(
+            "Spin-polarized PBE is not implemented; use nspin = 1."
+        );
     }
     require_positive(
         config.kpoint_symmetry.tolerance_angstrom,

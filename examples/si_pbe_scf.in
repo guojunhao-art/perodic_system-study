@@ -1,0 +1,29 @@
+calculation = scf
+structure = POSCAR_Si_diamond
+pseudo = Si ../pseudopotentials/Si.pbe-hgh.UPF
+xc = pbe
+
+# This 4^3/10-Ha setup is a quick functionality test, not a converged
+# production calculation. Converge both cutoff and k-point density before
+# using total energies or forces quantitatively.
+kpoints = mp 4 4 4
+ecut_ha = 10.0
+fft_grid = auto
+fft_threads = auto
+nelect = auto
+nbands = 8
+nspin = 1
+occupations = zero_t
+
+scf_max_iterations = 150
+energy_tolerance_ha = 1.0e-7
+eigensolver_max_iterations = 100
+eigensolver_initial_tolerance_ha = 1.0e-7
+eigensolver_tolerance_ha = 2.0e-10
+eigensolver_empty_tolerance_ha = 1.0e-6
+mixing_alpha = 0.15
+pulay_max_history = 8
+pulay_min_history = 2
+verbosity = compact
+
+checkpoint_output = si_pbe.scf.chk

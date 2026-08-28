@@ -9,7 +9,6 @@
 #include "xc_functional.hpp"
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <iomanip>
@@ -27,17 +26,6 @@ double elapsed_seconds(PerformanceClock::time_point start) {
     return std::chrono::duration<double>(
         PerformanceClock::now() - start
     ).count();
-}
-
-bool is_perdew_zunger_lda(const std::string& functional) {
-    std::string uppercase = functional;
-    std::transform(
-        uppercase.begin(), uppercase.end(), uppercase.begin(),
-        [](unsigned char c) {
-            return static_cast<char>(std::toupper(c));
-        }
-    );
-    return uppercase.find("PZ") != std::string::npos;
 }
 
 Eigen::Vector3i maximum_required_fft_frequency(
@@ -302,10 +290,13 @@ SinglePointResult run_single_point(
                 + upf.header.element + "."
             );
         }
-        if (!is_perdew_zunger_lda(upf.header.functional)) {
+        if (!pseudopotential_functional_matches_xc(
+                upf.header.functional,
+                config.scf.xc_functional)) {
             throw std::runtime_error(
-                "The " + element + " UPF functional is not PZ-LDA, while "
-                "this driver uses LibXC LDA_X + LDA_C_PZ."
+                "The " + element + " UPF functional label '"
+                + upf.header.functional + "' is incompatible with "
+                + xc_functional_name(config.scf.xc_functional) + "."
             );
         }
         recommended_cutoff_hartree = std::max(
@@ -540,7 +531,7 @@ SinglePointResult run_single_point(
             << options.density_tolerance
             << "    empty-band tolerance = "
             << options.eigensolver_empty_tolerance << " Ha\n"
-            << "  XC     = " << lda_functional_name(options.lda_functional)
+            << "  XC     = " << xc_functional_name(options.xc_functional)
             << "    LibXC " << libxc_runtime_version();
         if (options.nspin == 2) {
             *log_stream << "    MAGMOM(start) = "

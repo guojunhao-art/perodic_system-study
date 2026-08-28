@@ -628,8 +628,8 @@ KPointSCFResult run_kpoint_scf(
         mixer.min_history = options.pulay_min_history;
         mixer.regularization = options.pulay_regularization;
     }
-    LibXCLDAFunctional xc(
-        options.lda_functional, options.nspin
+    LibXCFunctional xc(
+        options.xc_functional, options.nspin
     );
     std::vector<double> weights;
     weights.reserve(state_count);
@@ -672,7 +672,7 @@ KPointSCFResult run_kpoint_scf(
         );
         if (options.nspin == 1) {
             const auto xc_input = xc.evaluate(
-                spin_densities[0], dV
+                lattice, fft, spin_densities[0], dV
             );
             effective_potentials[0] = combine_effective_potential(
                 ionic_potential, hartree_input, xc_input.Vxc
@@ -1098,7 +1098,7 @@ KPointSCFResult run_kpoint_scf(
         double correlation_energy = 0.0;
         if (options.nspin == 1) {
             const auto xc_output = xc.evaluate(
-                spin_density_output[0], dV
+                lattice, fft, spin_density_output[0], dV
             );
             exchange_energy = xc_output.exchange_energy;
             correlation_energy = xc_output.correlation_energy;

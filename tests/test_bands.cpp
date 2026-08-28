@@ -123,8 +123,51 @@ int main() {
         );
         std::filesystem::remove(output_path);
 
+        bands.projection.orbitals = {
+            {0, "Si", 0, "3S", 0, 0},
+            {0, "Si", 1, "3P", 1, 1}
+        };
+        bands.projection.minimum_overlap_eigenvalue = 0.8;
+        bands.projection.maximum_overlap_eigenvalue = 1.2;
+        bands.projection.maximum_orthonormality_error = 1.0e-13;
+        bands.projection.states.resize(path.size());
+        for (int ik = 0;
+             ik < static_cast<int>(path.size());
+             ++ik) {
+            AtomicProjectionState& projected =
+                bands.projection.states[ik];
+            projected.spin_channel = 0;
+            projected.kpoint_index = ik;
+            projected.weights.resize(2, 2);
+            projected.weights <<
+                0.7, 0.2,
+                0.1, 0.6;
+        }
+        const std::filesystem::path fat_output_path =
+            std::filesystem::temp_directory_path()
+            / "pwdft-test-fatbands.dat";
+        write_fat_band_structure(
+            fat_output_path.string(), bands
+        );
+        std::ifstream fat_output(fat_output_path);
+        std::ostringstream fat_text;
+        fat_text << fat_output.rdbuf();
+        require_true(
+            fat_text.str().find(
+                "Löwdin projected fixed-density NSCF bands"
+            ) != std::string::npos &&
+            fat_text.str().find("\"px\"") !=
+                std::string::npos &&
+            fat_text.str().find("\"cos\"") !=
+                std::string::npos &&
+            fat_text.str().find("state_projection_sum") !=
+                std::string::npos,
+            "Fat-band output header or real-harmonic labels"
+        );
+        std::filesystem::remove(fat_output_path);
+
         std::cout
-            << "Band-path interpolation and NSCF output tests passed.\n";
+            << "Band-path, NSCF, and fat-band output tests passed.\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Band-structure test failed: "

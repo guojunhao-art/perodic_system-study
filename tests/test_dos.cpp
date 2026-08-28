@@ -112,6 +112,24 @@ int main() {
             1.0e-12,
             "Integrated nonmagnetic DOS state count"
         );
+        require_close(
+            nonmagnetic.expected_total_states,
+            2.0,
+            1.0e-14,
+            "Expected nonmagnetic DOS state count"
+        );
+        require_close(
+            nonmagnetic.analytic_states_in_window,
+            2.0,
+            1.0e-12,
+            "Analytic DOS energy-window integral"
+        );
+        require_close(
+            nonmagnetic.numerical_states_in_window,
+            nonmagnetic.analytic_states_in_window,
+            2.0e-8,
+            "Numerical DOS quadrature self-check"
+        );
 
         SCFOptions spin_options = nonmagnetic_options;
         spin_options.nspin = 2;
@@ -182,8 +200,10 @@ int main() {
             text.str().find("dos_up_states_per_ev") !=
                 std::string::npos &&
             text.str().find("gaussian_sigma_ev") !=
+                std::string::npos &&
+            text.str().find("numerical_minus_analytic_states") !=
                 std::string::npos,
-            "Spin-resolved DOS output header mismatch"
+            "Spin-resolved DOS output or integral diagnostics mismatch"
         );
         std::filesystem::remove(output_path);
 

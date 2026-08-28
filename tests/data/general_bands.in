@@ -16,3 +16,4 @@ band_point = G 0.0 0.0 0.0
 band_point = X 0.5 0.0 0.5
 band_point = L 0.5 0.5 0.5
 bands_output = test-bands.dat
+fatbands_output = test-fatbands.dat

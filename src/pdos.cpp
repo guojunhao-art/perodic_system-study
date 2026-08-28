@@ -119,6 +119,56 @@ int electronic_state_index(
 
 } // namespace
 
+RealHarmonicDescriptor describe_real_harmonic(
+    int angular_momentum,
+    int real_harmonic_index) {
+
+    if (angular_momentum < 0 ||
+        real_harmonic_index < 0 ||
+        real_harmonic_index >= 2 * angular_momentum + 1) {
+        throw std::runtime_error(
+            "Invalid angular momentum or real-harmonic index."
+        );
+    }
+
+    RealHarmonicDescriptor result;
+    if (real_harmonic_index == 0) {
+        result.absolute_m = 0;
+        result.branch = "m0";
+    } else {
+        result.absolute_m =
+            (real_harmonic_index + 1) / 2;
+        result.branch =
+            real_harmonic_index % 2 == 1 ? "cos" : "sin";
+    }
+
+    if (angular_momentum == 0) {
+        result.orbital_name = "s";
+    } else if (angular_momentum == 1) {
+        static const std::vector<std::string> names{
+            "pz", "px", "py"
+        };
+        result.orbital_name = names[real_harmonic_index];
+    } else if (angular_momentum == 2) {
+        static const std::vector<std::string> names{
+            "dz2", "dxz", "dyz", "dx2-y2", "dxy"
+        };
+        result.orbital_name = names[real_harmonic_index];
+    } else if (angular_momentum == 3) {
+        static const std::vector<std::string> names{
+            "fz3", "fxz2", "fyz2", "fz(x2-y2)",
+            "fxyz", "fx(x2-3y2)", "fy(3x2-y2)"
+        };
+        result.orbital_name = names[real_harmonic_index];
+    } else {
+        result.orbital_name =
+            "l" + std::to_string(angular_momentum)
+            + "_" + result.branch
+            + std::to_string(result.absolute_m);
+    }
+    return result;
+}
+
 AtomicProjectionSpecies prepare_atomic_projection_species(
     const UPFData& upf) {
 
@@ -494,6 +544,8 @@ ProjectedDensityOfStatesResult compute_projected_density_of_states(
                     : state.occupations[band];
                 const double projection_sum =
                     projected.weights.col(band).sum();
+                result.full_projected_state_weight +=
+                    state_weight * projection_sum;
                 total_occupied_electrons +=
                     state.weight * occupation;
                 represented_occupied_electrons +=
@@ -535,6 +587,30 @@ ProjectedDensityOfStatesResult compute_projected_density_of_states(
             }
         }
     }
+    for (const ProjectedDensityOfStatesChannel& channel :
+         result.channels) {
+        for (int spin = 0; spin < nspin; ++spin) {
+            result.analytic_projected_states_in_window +=
+                channel.integrated_spin[spin].back()
+                - channel.integrated_spin[spin].front();
+            for (int sample = 1;
+                 sample < static_cast<int>(
+                     result.energies_ha.size()
+                 );
+                 ++sample) {
+                const double spacing =
+                    result.energies_ha[sample]
+                    - result.energies_ha[sample - 1];
+                result.numerical_projected_states_in_window +=
+                    0.5 * spacing
+                    * (channel.spin_per_ha[spin][sample - 1]
+                       + channel.spin_per_ha[spin][sample]);
+            }
+        }
+    }
+    result.numerical_minus_analytic_projected_states =
+        result.numerical_projected_states_in_window
+        - result.analytic_projected_states_in_window;
     if (total_occupied_electrons > 0.0) {
         result.occupied_spilling = std::clamp(
             1.0 - represented_occupied_electrons
@@ -580,6 +656,18 @@ void write_projected_density_of_states(
         << result.channels.size() << "\n"
         << "# occupied_spilling = "
         << result.occupied_spilling << "\n"
+        << "# full_projected_state_weight = "
+        << result.full_projected_state_weight << "\n"
+        << "# analytic_projected_states_in_energy_window = "
+        << result.analytic_projected_states_in_window << "\n"
+        << "# numerical_projected_states_in_energy_window = "
+        << result.numerical_projected_states_in_window << "\n"
+        << "# numerical_minus_analytic_projected_states = "
+        << result.numerical_minus_analytic_projected_states << "\n"
+        << "# projected_weight_outside_energy_window = "
+        << result.full_projected_state_weight
+            - result.analytic_projected_states_in_window
+        << "\n"
         << "# overlap_eigenvalue_min = "
         << result.projection.minimum_overlap_eigenvalue << "\n"
         << "# overlap_eigenvalue_max = "
@@ -594,6 +682,11 @@ void write_projected_density_of_states(
          ++orbital) {
         const AtomicProjectionOrbital& item =
             result.channels[orbital].orbital;
+        const RealHarmonicDescriptor harmonic =
+            describe_real_harmonic(
+                item.angular_momentum,
+                item.real_harmonic_index
+            );
         output << "# orbital " << orbital
             << " atom=" << item.atom_index
             << " element=" << std::quoted(item.element)
@@ -601,11 +694,16 @@ void write_projected_density_of_states(
             << " label=" << std::quoted(item.label)
             << " l=" << item.angular_momentum
             << " real_harmonic=" << item.real_harmonic_index
+            << " m_abs=" << harmonic.absolute_m
+            << " branch=" << std::quoted(harmonic.branch)
+            << " orbital_name="
+            << std::quoted(harmonic.orbital_name)
             << "\n";
     }
     output
         << "# columns: energy_ha energy_ev energy_minus_fermi_ev "
-           "orbital atom element wfc label l real_harmonic spin "
+           "orbital atom element wfc label l real_harmonic m_abs "
+           "branch orbital_name spin "
            "pdos_states_per_ev integrated_projected_states\n";
 
     for (int orbital = 0;
@@ -613,6 +711,11 @@ void write_projected_density_of_states(
          ++orbital) {
         const ProjectedDensityOfStatesChannel& channel =
             result.channels[orbital];
+        const RealHarmonicDescriptor harmonic =
+            describe_real_harmonic(
+                channel.orbital.angular_momentum,
+                channel.orbital.real_harmonic_index
+            );
         for (int spin = 0; spin < result.nspin; ++spin) {
             for (int sample = 0;
                  sample < static_cast<int>(
@@ -642,6 +745,10 @@ void write_projected_density_of_states(
                     << channel.orbital.angular_momentum
                     << " " << std::setw(3)
                     << channel.orbital.real_harmonic_index
+                    << " " << std::setw(3)
+                    << harmonic.absolute_m
+                    << " " << std::quoted(harmonic.branch)
+                    << " " << std::quoted(harmonic.orbital_name)
                     << " " << std::setw(3) << spin
                     << " " << std::setw(20)
                     << channel.spin_per_ha[spin][sample]

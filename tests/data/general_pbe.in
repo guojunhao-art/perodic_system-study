@@ -9,5 +9,6 @@ kpoint_symmetry = off
 ecut_ha = 10.0
 nelect = auto
 nbands = 4
-nspin = 1
+nspin = 2
+starting_magnetization = 1.0
 occupations = zero_t

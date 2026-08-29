@@ -165,6 +165,8 @@ build_fixed_effective_potentials(
         );
     } else {
         const SpinXCResult xc_result = xc.evaluate_spin(
+            lattice,
+            fft,
             spin_densities[0], spin_densities[1], dV
         );
         potentials[0] = combine_effective_potential(

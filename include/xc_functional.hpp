@@ -54,13 +54,11 @@ std::vector<double> spectral_divergence(
     const std::array<std::vector<double>, 3>& vector_field);
 
 /*
- * Unpolarized LDA/GGA or collinear spin-polarized LDA wrapper around LibXC.
+ * Unpolarized or collinear spin-polarized LDA/GGA wrapper around LibXC.
  *
  * LibXC functional objects are initialized once and reused for every SCF
  * iteration. The implementation is hidden so public headers do not expose
- * LibXC's C data structures.  The first PBE implementation is deliberately
- * restricted to nspin = 1; the existing PZ-LDA path continues to support
- * nspin = 1 and 2.
+ * LibXC's C data structures.
  */
 class LibXCFunctional {
 public:
@@ -81,6 +79,8 @@ public:
         double dV) const;
 
     SpinXCResult evaluate_spin(
+        const Lattice& lattice,
+        FFTWorkspace& fft,
         const std::vector<double>& density_up,
         const std::vector<double>& density_down,
         double dV) const;

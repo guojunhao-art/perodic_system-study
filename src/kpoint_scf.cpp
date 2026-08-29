@@ -679,6 +679,8 @@ KPointSCFResult run_kpoint_scf(
             );
         } else {
             const auto xc_input = xc.evaluate_spin(
+                lattice,
+                fft,
                 spin_densities[0], spin_densities[1], dV
             );
             effective_potentials[0] = combine_effective_potential(
@@ -1104,6 +1106,8 @@ KPointSCFResult run_kpoint_scf(
             correlation_energy = xc_output.correlation_energy;
         } else {
             const auto xc_output = xc.evaluate_spin(
+                lattice,
+                fft,
                 spin_density_output[0],
                 spin_density_output[1],
                 dV

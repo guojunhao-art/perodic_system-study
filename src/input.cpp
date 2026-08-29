@@ -899,13 +899,6 @@ CalculationConfig read_calculation_config(const std::string& path) {
     if (config.scf.nspin != 1 && config.scf.nspin != 2) {
         throw std::runtime_error("nspin must be 1 or 2.");
     }
-    if (config.scf.nspin == 2 &&
-        config.scf.xc_functional ==
-            XCFunctional::PerdewBurkeErnzerhof) {
-        throw std::runtime_error(
-            "Spin-polarized PBE is not implemented; use nspin = 1."
-        );
-    }
     require_positive(
         config.kpoint_symmetry.tolerance_angstrom,
         "symmetry_tolerance_angstrom"

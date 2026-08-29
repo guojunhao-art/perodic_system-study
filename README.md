@@ -11,7 +11,7 @@ spin--orbit coupling），并使用 Hartree 原子单位。代码保留了许多
 - Bloch 多 k 点平面波基组、FFT-based $H\psi$ 和可选的 k 点级 MPI 并行；
 - Gamma-centered、Monkhorst–Pack 和显式带权 k 点输入；
 - 所有 k 点和自旋通道共享化学势的零温/Fermi–Dirac 占据及带权密度、能量和力；
-- LibXC 非磁性 PZ-LDA/PBE-GGA，以及共线自旋极化 PZ-LDA SCF；
+- LibXC 非磁性和共线自旋极化 PZ-LDA/PBE-GGA SCF；
 - fixed、简并感知零温和 Fermi–Dirac 占据；
 - 随外层密度残差自动收紧、占据数感知并在退出前精修占据带的 Davidson 容差；
 - 线性/自适应辅助函数和 Pulay density mixing；
@@ -1106,7 +1106,7 @@ $v_{\mathrm{xc},\uparrow}$ 和 $v_{\mathrm{xc},\downarrow}$。LibXC 要求输入
 `ExchangeOnly` 做回归比较。LibXC functional 对象在一次 SCF 开始前初始化，
 随后跨迭代复用，而不是对每个网格点重复初始化。
 
-非自旋极化 PBE 使用 `XC_GGA_X_PBE + XC_GGA_C_PBE`。周期密度展开为
+PBE 使用 `XC_GGA_X_PBE + XC_GGA_C_PBE`。周期密度展开为
 
 $$
 n(\mathbf r)=\sum_{\mathbf G}n(\mathbf G)e^{i\mathbf G\cdot\mathbf r},
@@ -1136,10 +1136,48 @@ v_{\rm xc}(\mathbf r)=v_\rho(\mathbf r)-
 \nabla\cdot\left[2v_\sigma(\mathbf r)\nabla n(\mathbf r)\right].
 $$
 
+共线自旋 PBE 将每个网格点的输入按 LibXC 约定排列为
+
+$$
+(n_\uparrow,n_\downarrow),\qquad
+(\sigma_{\uparrow\uparrow},
+ \sigma_{\uparrow\downarrow},
+ \sigma_{\downarrow\downarrow}),
+$$
+
+其中
+
+$$
+\sigma_{\uparrow\uparrow}=|\nabla n_\uparrow|^2,
+\quad
+\sigma_{\uparrow\downarrow}=\nabla n_\uparrow\cdot\nabla n_\downarrow,
+\quad
+\sigma_{\downarrow\downarrow}=|\nabla n_\downarrow|^2.
+$$
+
+两个自旋通道进入 Hamiltonian 的势分别为
+
+$$
+v_{\rm xc}^{\uparrow}=v_\rho^\uparrow-
+\nabla\cdot\left(
+2v_{\sigma_{\uparrow\uparrow}}\nabla n_\uparrow+
+v_{\sigma_{\uparrow\downarrow}}\nabla n_\downarrow
+\right),
+$$
+
+$$
+v_{\rm xc}^{\downarrow}=v_\rho^\downarrow-
+\nabla\cdot\left(
+v_{\sigma_{\uparrow\downarrow}}\nabla n_\uparrow+
+2v_{\sigma_{\downarrow\downarrow}}\nabla n_\downarrow
+\right).
+$$
+
 梯度和散度使用同一个离散频谱算子；单元测试直接验证
-$\delta E_{\rm xc}=\Delta V\sum_p v_{{\rm xc},p}\delta n_p$，而不只检查
-LibXC 输出是否有限。当前 PBE 限于 `nspin = 1`、固定晶胞和无 NLCC；自旋 PBE、
-GGA stress 与 NLCC 显式 XC 力留给后续实现。SCF checkpoint v2 保存通用
+$\delta E_{\rm xc}=\Delta V\sum_{p\sigma}
+v_{{\rm xc},p}^{\sigma}\delta n_p^{\sigma}$，而不只检查
+LibXC 输出是否有限。当前 PBE 支持 `nspin = 1/2`、固定晶胞和无 NLCC；GGA
+stress 与 NLCC 显式 XC 力留给后续实现。SCF checkpoint v2 保存通用
 `xc_functional`，同时仍可读取旧的 PZ-LDA checkpoint v1。
 
 LibXC 的 `exc` 是每粒子能量，而 `vrho` 是单位体积能量对密度的一阶导数；
@@ -1775,8 +1813,7 @@ UPF 格式和字段定义参考
 2. 用相同 NC-UPF、cutoff、FFT 网格和 $k$ 点分别对 Si、H 原子与 O₂ 做
    Quantum ESPRESSO 交叉验证，覆盖总能、占据能带、力和磁矩；
 3. 为共线自旋总能量补充真实 UPF 的三维全 SCF 力有限差分；
-4. 为现有非自旋 PBE 补充 Quantum ESPRESSO 总能/力交叉验证，再实现
-   $n_{\rm spin}=2$ 的三个 $\sigma$ 分量与自旋 PBE 势；
+4. 为非自旋与共线自旋 PBE 补充 Quantum ESPRESSO 总能、力和磁矩交叉验证；
 5. 增加 CUBE 电荷密度/势输出和局部轨道坐标旋转，方便检查实空间结果与畸变
    配位环境中的 orbital-resolved PDOS；
 6. 最后实现应力张量和变晶胞优化，避免在固定晶胞链路尚未系统验证时同时引入

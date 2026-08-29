@@ -308,6 +308,8 @@ void test_collinear_spin_scf() {
     hydrogen_options.nelec = 1.0;
     hydrogen_options.nspin = 2;
     hydrogen_options.starting_magnetization = 1.0;
+    hydrogen_options.xc_functional =
+        XCFunctional::PerdewBurkeErnzerhof;
     FFTWorkspace hydrogen_fft(grid);
     const KPointSCFResult hydrogen = run_kpoint_scf(
         lattice,
@@ -319,7 +321,7 @@ void test_collinear_spin_scf() {
     );
     if (!hydrogen.converged) {
         throw std::runtime_error(
-            "One-electron spin-polarized SCF did not converge."
+            "One-electron spin-PBE SCF did not converge."
         );
     }
     require_close(

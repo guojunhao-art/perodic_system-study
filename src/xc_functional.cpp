@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <complex>
 #include <stdexcept>
@@ -13,6 +14,9 @@ namespace {
 
 constexpr double negative_density_tolerance = 1.0e-12;
 constexpr double inverse_fft_imaginary_tolerance = 1.0e-10;
+constexpr int sigma_up_up = 0;
+constexpr int sigma_up_down = 1;
+constexpr int sigma_down_down = 2;
 
 void initialize_functional(
     xc_func_type& functional,
@@ -194,6 +198,46 @@ void evaluate_one_spin_lda_functional(
     }
 }
 
+void evaluate_one_spin_gga_functional(
+    const xc_func_type& functional,
+    const std::vector<double>& interleaved_density,
+    const std::vector<double>& sigma,
+    const std::vector<double>& total_density,
+    double dV,
+    std::vector<double>& potential_up,
+    std::vector<double>& potential_down,
+    std::array<std::vector<double>, 3>& vsigma,
+    double& energy) {
+
+    const int point_count = static_cast<int>(total_density.size());
+    if (point_count == 0) {
+        energy = 0.0;
+        return;
+    }
+    std::vector<double> energy_per_particle(point_count, 0.0);
+    std::vector<double> local_vrho(2 * point_count, 0.0);
+    std::vector<double> local_vsigma(3 * point_count, 0.0);
+    xc_gga_exc_vxc(
+        &functional,
+        point_count,
+        interleaved_density.data(),
+        sigma.data(),
+        energy_per_particle.data(),
+        local_vrho.data(),
+        local_vsigma.data()
+    );
+    energy = 0.0;
+    for (int p = 0; p < point_count; ++p) {
+        energy += dV * total_density[p] * energy_per_particle[p];
+        potential_up[p] += local_vrho[2 * p];
+        potential_down[p] += local_vrho[2 * p + 1];
+        for (int component = 0; component < 3; ++component) {
+            vsigma[component][p] +=
+                local_vsigma[3 * p + component];
+        }
+    }
+}
+
 } // namespace
 
 std::array<std::vector<double>, 3> spectral_gradient(
@@ -336,12 +380,6 @@ LibXCFunctional::LibXCFunctional(
     if (nspin != 1 && nspin != 2) {
         throw std::runtime_error("LibXC supports nspin = 1 or 2.");
     }
-    if (functional == XCFunctional::PerdewBurkeErnzerhof &&
-        nspin != 1) {
-        throw std::runtime_error(
-            "Spin-polarized PBE is not implemented; use nspin = 1."
-        );
-    }
     impl_->nspin = nspin;
     const int polarization =
         nspin == 1 ? XC_UNPOLARIZED : XC_POLARIZED;
@@ -478,6 +516,8 @@ XCResult LibXCFunctional::evaluate(
 }
 
 SpinXCResult LibXCFunctional::evaluate_spin(
+    const Lattice& lattice,
+    FFTWorkspace& fft,
     const std::vector<double>& density_up,
     const std::vector<double>& density_down,
     double dV) const {
@@ -485,11 +525,6 @@ SpinXCResult LibXCFunctional::evaluate_spin(
     if (impl_->nspin != 2) {
         throw std::runtime_error(
             "Use evaluate() for an unpolarized LibXC functional."
-        );
-    }
-    if (impl_->is_gga) {
-        throw std::runtime_error(
-            "Spin-polarized GGA evaluation is not implemented."
         );
     }
     if (!std::isfinite(dV) || dV <= 0.0) {
@@ -502,12 +537,15 @@ SpinXCResult LibXCFunctional::evaluate_spin(
             "Spin-density grids must have the same size."
         );
     }
+    validate_real_field(density_up, fft, "Spin-up XC density");
+    validate_real_field(density_down, fft, "Spin-down XC density");
 
     const std::vector<double> sanitized_up =
         sanitize_density(density_up);
     const std::vector<double> sanitized_down =
         sanitize_density(density_down);
     const int point_count = static_cast<int>(density_up.size());
+    /* LibXC uses a point-major polarized layout: up, down. */
     std::vector<double> interleaved_density(2 * point_count, 0.0);
     std::vector<double> total_density(point_count, 0.0);
     for (int p = 0; p < point_count; ++p) {
@@ -519,6 +557,99 @@ SpinXCResult LibXCFunctional::evaluate_spin(
     SpinXCResult result;
     result.Vxc_up.assign(point_count, 0.0);
     result.Vxc_down.assign(point_count, 0.0);
+    if (impl_->is_gga) {
+        const std::array<std::vector<double>, 3> gradient_up =
+            spectral_gradient(lattice, fft, sanitized_up);
+        const std::array<std::vector<double>, 3> gradient_down =
+            spectral_gradient(lattice, fft, sanitized_down);
+        /*
+         * The three point-major LibXC GGA channels are
+         * (up-up, up-down, down-down).
+         */
+        std::vector<double> sigma(3 * point_count, 0.0);
+        for (int p = 0; p < point_count; ++p) {
+            for (int direction = 0; direction < 3; ++direction) {
+                sigma[3 * p + sigma_up_up] +=
+                    gradient_up[direction][p]
+                    * gradient_up[direction][p];
+                sigma[3 * p + sigma_up_down] +=
+                    gradient_up[direction][p]
+                    * gradient_down[direction][p];
+                sigma[3 * p + sigma_down_down] +=
+                    gradient_down[direction][p]
+                    * gradient_down[direction][p];
+            }
+        }
+
+        std::array<std::vector<double>, 3> vsigma;
+        for (std::vector<double>& component : vsigma) {
+            component.assign(point_count, 0.0);
+        }
+        evaluate_one_spin_gga_functional(
+            impl_->exchange,
+            interleaved_density,
+            sigma,
+            total_density,
+            dV,
+            result.Vxc_up,
+            result.Vxc_down,
+            vsigma,
+            result.exchange_energy
+        );
+        evaluate_one_spin_gga_functional(
+            impl_->correlation,
+            interleaved_density,
+            sigma,
+            total_density,
+            dV,
+            result.Vxc_up,
+            result.Vxc_down,
+            vsigma,
+            result.correlation_energy
+        );
+
+        std::array<std::vector<double>, 3> flux_up;
+        std::array<std::vector<double>, 3> flux_down;
+        for (int direction = 0; direction < 3; ++direction) {
+            flux_up[direction].resize(point_count);
+            flux_down[direction].resize(point_count);
+            for (int p = 0; p < point_count; ++p) {
+                flux_up[direction][p] =
+                    2.0 * vsigma[sigma_up_up][p]
+                        * gradient_up[direction][p]
+                    + vsigma[sigma_up_down][p]
+                        * gradient_down[direction][p];
+                flux_down[direction][p] =
+                    vsigma[sigma_up_down][p]
+                        * gradient_up[direction][p]
+                    + 2.0 * vsigma[sigma_down_down][p]
+                        * gradient_down[direction][p];
+            }
+        }
+        const std::vector<double> divergence_up =
+            spectral_divergence(lattice, fft, flux_up);
+        const std::vector<double> divergence_down =
+            spectral_divergence(lattice, fft, flux_down);
+        for (int p = 0; p < point_count; ++p) {
+            result.Vxc_up[p] -= divergence_up[p];
+            result.Vxc_down[p] -= divergence_down[p];
+            if (!std::isfinite(result.Vxc_up[p]) ||
+                !std::isfinite(result.Vxc_down[p])) {
+                throw std::runtime_error(
+                    "Spin-polarized PBE XC potential contains a "
+                    "non-finite value."
+                );
+            }
+        }
+        if (!std::isfinite(result.exchange_energy) ||
+            !std::isfinite(result.correlation_energy)) {
+            throw std::runtime_error(
+                "Spin-polarized PBE XC energy contains a non-finite value."
+            );
+        }
+        return result;
+    }
+
     evaluate_one_spin_lda_functional(
         impl_->exchange,
         interleaved_density,

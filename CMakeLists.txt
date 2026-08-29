@@ -290,7 +290,7 @@ add_test(NAME kpoint_symmetry_reduction COMMAND test_symmetry)
 
 add_executable(test_xc_functional tests/test_xc_functional.cpp)
 target_link_libraries(test_xc_functional PRIVATE pw_dft_core)
-add_test(NAME libxc_lda COMMAND test_xc_functional)
+add_test(NAME libxc_lda_gga COMMAND test_xc_functional)
 
 add_executable(test_upf_local_potential tests/test_upf_local_potential.cpp)
 target_link_libraries(test_upf_local_potential PRIVATE pw_dft_core)

@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
 #include <cmath>
 #include <complex>
 #include <iomanip>
@@ -72,15 +71,20 @@ struct MaximumForceError {
     }
 };
 
-bool is_perdew_zunger_lda(const std::string& functional) {
-    std::string uppercase = functional;
-    std::transform(
-        uppercase.begin(), uppercase.end(), uppercase.begin(),
-        [](unsigned char c) {
-            return static_cast<char>(std::toupper(c));
-        }
+XCFunctional xc_functional_from_upf(const std::string& functional) {
+    if (pseudopotential_functional_matches_xc(
+            functional,
+            XCFunctional::PerdewBurkeErnzerhof)) {
+        return XCFunctional::PerdewBurkeErnzerhof;
+    }
+    if (pseudopotential_functional_matches_xc(
+            functional,
+            XCFunctional::PerdewZunger)) {
+        return XCFunctional::PerdewZunger;
+    }
+    throw std::runtime_error(
+        "The Si UPF must use PZ-LDA or PBE."
     );
-    return uppercase.find("PZ") != std::string::npos;
 }
 
 void wrap_fractional(Eigen::Vector3d& position) {
@@ -371,9 +375,8 @@ int main(int argc, char** argv) {
         if (upf.header.element != "Si") {
             throw std::runtime_error("si2_force_check requires a Si UPF.");
         }
-        if (!is_perdew_zunger_lda(upf.header.functional)) {
-            throw std::runtime_error("The Si UPF must use PZ-LDA.");
-        }
+        const XCFunctional xc_functional =
+            xc_functional_from_upf(upf.header.functional);
         if (upf.projectors.empty()) {
             throw std::runtime_error(
                 "The Si force check requires nonlocal UPF projectors."
@@ -402,6 +405,7 @@ int main(int argc, char** argv) {
         };
 
         SCFOptions options;
+        options.xc_functional = xc_functional;
         options.nelec = 2.0 * upf.header.z_valence;
         options.nbands = std::max(
             12,

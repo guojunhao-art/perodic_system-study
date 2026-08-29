@@ -2,7 +2,9 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -63,8 +65,8 @@ int main() {
         CalculationConfig config;
         config.ewald_width_bohr = 0.75;
         config.scf.nspin = 2;
-        config.scf.lda_functional =
-            LDAFunctional::PerdewZunger;
+        config.scf.xc_functional =
+            XCFunctional::PerdewZunger;
         config.pseudopotential_paths["Si"] =
             data_path("minimal_sp_nc.upf");
         config.pseudopotential_paths["H"] =
@@ -95,7 +97,41 @@ int main() {
         write_scf_checkpoint(output.string(), checkpoint);
         const SCFCheckpoint restored =
             read_scf_checkpoint(output.string());
+
+        std::ifstream current_input(output);
+        std::ostringstream current_buffer;
+        current_buffer << current_input.rdbuf();
+        std::string legacy_contents = current_buffer.str();
+        const std::string version_two = "PWDFT_SCF_CHECKPOINT 2";
+        const std::string version_one = "PWDFT_SCF_CHECKPOINT 1";
+        const std::size_t version_position =
+            legacy_contents.find(version_two);
+        const std::size_t functional_position =
+            legacy_contents.find("xc_functional");
+        require(
+            version_position != std::string::npos &&
+            functional_position != std::string::npos,
+            "Checkpoint v2 fields were not written"
+        );
+        legacy_contents.replace(
+            version_position, version_two.size(), version_one
+        );
+        legacy_contents.replace(
+            functional_position,
+            std::string("xc_functional").size(),
+            "lda_functional"
+        );
+        const std::filesystem::path legacy_output =
+            std::filesystem::temp_directory_path()
+            / "pwdft-checkpoint-test-v1.dat";
+        {
+            std::ofstream legacy_stream(legacy_output);
+            legacy_stream << legacy_contents;
+        }
+        const SCFCheckpoint restored_legacy =
+            read_scf_checkpoint(legacy_output.string());
         std::filesystem::remove(output);
+        std::filesystem::remove(legacy_output);
 
         require(
             restored.structure.species_order ==
@@ -111,6 +147,17 @@ int main() {
             restored.spin_densities.size() == 2,
             "Checkpoint electronic dimensions did not round-trip"
         );
+        require(
+            restored.format_version == 2 &&
+            restored.xc_functional == XCFunctional::PerdewZunger,
+            "Checkpoint XC metadata did not round-trip"
+        );
+        require(
+            restored_legacy.format_version == 1 &&
+            restored_legacy.xc_functional ==
+                XCFunctional::PerdewZunger,
+            "Legacy PZ-LDA checkpoint was not read"
+        );
         require_close(
             restored.fermi_energy_ha,
             -0.21,
@@ -125,6 +172,9 @@ int main() {
         );
         validate_scf_checkpoint(
             restored, structure, config, 3.0
+        );
+        validate_scf_checkpoint(
+            restored_legacy, structure, config, 3.0
         );
 
         AtomicStructure displaced = structure;

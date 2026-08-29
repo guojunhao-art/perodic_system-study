@@ -46,7 +46,8 @@ SelfConsistentPoint run_scf_from_scratch(
     const Lattice& lattice,
     const FFTGrid& grid,
     const PlaneWaveBasis3D& basis,
-    const std::vector<Ion>& ions) {
+    const std::vector<Ion>& ions,
+    XCFunctional xc_functional = XCFunctional::PerdewZunger) {
 
     FFTWorkspace fft(grid);
     const double nelec = 2.0;
@@ -57,6 +58,7 @@ SelfConsistentPoint run_scf_from_scratch(
         build_gaussian_nonlocal_projectors(lattice, basis, ions);
 
     SCFOptions options;
+    options.xc_functional = xc_functional;
     options.nelec = nelec;
     options.nbands = nbands;
     options.occupation_mode = OccupationMode::Fixed;
@@ -213,6 +215,43 @@ int main() {
         if (max_error >= 2.0e-5) {
             throw std::runtime_error(
                 "Self-consistent finite-difference force error is too large."
+            );
+        }
+
+        std::cout << "Running PBE force finite difference in x...\n";
+        const SelfConsistentPoint pbe_center = run_scf_from_scratch(
+            lattice,
+            grid,
+            basis,
+            ions,
+            XCFunctional::PerdewBurkeErnzerhof
+        );
+        const SelfConsistentPoint pbe_plus = run_scf_from_scratch(
+            lattice,
+            grid,
+            basis,
+            displace_ion_cartesian(lattice, ions, 0, 0, h),
+            XCFunctional::PerdewBurkeErnzerhof
+        );
+        const SelfConsistentPoint pbe_minus = run_scf_from_scratch(
+            lattice,
+            grid,
+            basis,
+            displace_ion_cartesian(lattice, ions, 0, 0, -h),
+            XCFunctional::PerdewBurkeErnzerhof
+        );
+        const double pbe_finite_difference =
+            -(pbe_plus.energy - pbe_minus.energy) / (2.0 * h);
+        const double pbe_force_error = std::abs(
+            pbe_center.force_on_ion0[0] - pbe_finite_difference
+        );
+        std::cout << "PBE analytic/FD force x = "
+                  << pbe_center.force_on_ion0[0] << " / "
+                  << pbe_finite_difference
+                  << "  |difference| = " << pbe_force_error << "\n";
+        if (pbe_force_error >= 2.0e-5) {
+            throw std::runtime_error(
+                "PBE self-consistent finite-difference force error is too large."
             );
         }
     } catch (const std::exception& error) {

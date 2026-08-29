@@ -320,7 +320,7 @@ int main(int argc, char** argv) {
             << "H2 local-NC-UPF bond optimization\n"
             << "---------------------------------\n"
             << "UPF       : " << upf.source_path << "\n"
-            << "XC        : " << lda_functional_name(options.lda_functional)
+            << "XC        : " << xc_functional_name(options.xc_functional)
             << "\n"
             << "cell      : " << cell_length_bohr << " Bohr\n"
             << "ecut      : " << ecut_hartree << " Ha\n"

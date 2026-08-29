@@ -1,12 +1,16 @@
 #pragma once
 
+#include "core.hpp"
+
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
 
-enum class LDAFunctional {
+enum class XCFunctional {
     ExchangeOnly,
-    PerdewZunger
+    PerdewZunger,
+    PerdewBurkeErnzerhof
 };
 
 struct XCResult {
@@ -31,29 +35,52 @@ struct SpinXCResult {
 };
 
 /*
- * Unpolarized or collinear spin-polarized LDA wrapper around LibXC.
+ * Periodic spectral derivatives used by GGA functionals.  FFTW's forward
+ * transform is normalized to Fourier-series coefficients before multiplying
+ * by iG.  Nyquist components are removed direction by direction so the
+ * discrete derivative remains real and skew-adjoint on even grids.
+ *
+ * The returned components are Cartesian derivatives in Bohr^-4 for a density
+ * supplied in Bohr^-3.
+ */
+std::array<std::vector<double>, 3> spectral_gradient(
+    const Lattice& lattice,
+    FFTWorkspace& fft,
+    const std::vector<double>& field);
+
+std::vector<double> spectral_divergence(
+    const Lattice& lattice,
+    FFTWorkspace& fft,
+    const std::array<std::vector<double>, 3>& vector_field);
+
+/*
+ * Unpolarized or collinear spin-polarized LDA/GGA wrapper around LibXC.
  *
  * LibXC functional objects are initialized once and reused for every SCF
  * iteration. The implementation is hidden so public headers do not expose
  * LibXC's C data structures.
  */
-class LibXCLDAFunctional {
+class LibXCFunctional {
 public:
-    explicit LibXCLDAFunctional(
-        LDAFunctional functional,
+    explicit LibXCFunctional(
+        XCFunctional functional,
         int nspin = 1);
-    ~LibXCLDAFunctional();
+    ~LibXCFunctional();
 
-    LibXCLDAFunctional(const LibXCLDAFunctional&) = delete;
-    LibXCLDAFunctional& operator=(const LibXCLDAFunctional&) = delete;
-    LibXCLDAFunctional(LibXCLDAFunctional&&) noexcept;
-    LibXCLDAFunctional& operator=(LibXCLDAFunctional&&) noexcept;
+    LibXCFunctional(const LibXCFunctional&) = delete;
+    LibXCFunctional& operator=(const LibXCFunctional&) = delete;
+    LibXCFunctional(LibXCFunctional&&) noexcept;
+    LibXCFunctional& operator=(LibXCFunctional&&) noexcept;
 
     XCResult evaluate(
+        const Lattice& lattice,
+        FFTWorkspace& fft,
         const std::vector<double>& density,
         double dV) const;
 
     SpinXCResult evaluate_spin(
+        const Lattice& lattice,
+        FFTWorkspace& fft,
         const std::vector<double>& density_up,
         const std::vector<double>& density_down,
         double dV) const;
@@ -63,5 +90,8 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-std::string lda_functional_name(LDAFunctional functional);
+std::string xc_functional_name(XCFunctional functional);
+bool pseudopotential_functional_matches_xc(
+    const std::string& label,
+    XCFunctional functional);
 std::string libxc_runtime_version();

@@ -150,20 +150,23 @@ build_fixed_effective_potentials(
         build_hartree_potential(
             lattice, fft, total_density
         );
-    LibXCLDAFunctional xc(
-        options.lda_functional, options.nspin
+    LibXCFunctional xc(
+        options.xc_functional, options.nspin
     );
     std::vector<std::vector<double>> potentials(
         options.nspin
     );
     if (options.nspin == 1) {
-        const XCResult xc_result =
-            xc.evaluate(spin_densities[0], dV);
+        const XCResult xc_result = xc.evaluate(
+            lattice, fft, spin_densities[0], dV
+        );
         potentials[0] = combine_effective_potential(
             ionic_potential, hartree, xc_result.Vxc
         );
     } else {
         const SpinXCResult xc_result = xc.evaluate_spin(
+            lattice,
+            fft,
             spin_densities[0], spin_densities[1], dV
         );
         potentials[0] = combine_effective_potential(

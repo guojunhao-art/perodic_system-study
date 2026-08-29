@@ -154,6 +154,21 @@ int main() {
         );
         require_true(config.nelect_auto,
                      "automatic nelect parsing mismatch");
+        require_true(
+            config.scf.xc_functional == XCFunctional::PerdewZunger,
+            "PZ-LDA XC parsing mismatch"
+        );
+        const CalculationConfig pbe_config = read_calculation_config(
+            data_path("general_pbe.in")
+        );
+        require_true(
+            pbe_config.scf.xc_functional ==
+                XCFunctional::PerdewBurkeErnzerhof &&
+            pbe_config.scf.nspin == 2 &&
+            std::abs(pbe_config.scf.starting_magnetization - 1.0)
+                < 1.0e-14,
+            "Spin-polarized PBE XC parsing mismatch"
+        );
         require_true(config.scf.occupation_mode == OccupationMode::FermiDirac,
                      "occupation mode parsing mismatch");
         require_close(

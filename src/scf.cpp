@@ -329,7 +329,7 @@ SCFResult run_scf(
 
     const std::vector<NonlocalProjector>* projector_ptr =
         projectors.empty() ? nullptr : &projectors;
-    LibXCLDAFunctional xc(options.lda_functional);
+    LibXCFunctional xc(options.xc_functional);
 
     SCFResult result;
     double previous_energy = 0.0;
@@ -351,7 +351,7 @@ SCFResult run_scf(
         const double eigensolver_tolerance = eigensolver_tolerances.current();
         auto phase_start = std::chrono::steady_clock::now();
         const auto VH = build_hartree_potential(lattice, fft, rho);
-        const auto xc_input = xc.evaluate(rho, dV);
+        const auto xc_input = xc.evaluate(lattice, fft, rho, dV);
         const auto Veff = combine_effective_potential(
             ionic_potential,
             VH,
@@ -487,7 +487,9 @@ SCFResult run_scf(
 
         phase_start = std::chrono::steady_clock::now();
         const auto VH_out = build_hartree_potential(lattice, fft, rho_out);
-        const auto xc_output = xc.evaluate(rho_out, dV);
+        const auto xc_output = xc.evaluate(
+            lattice, fft, rho_out, dV
+        );
         const bool finite_temperature =
             options.occupation_mode == OccupationMode::FermiDirac;
         EnergyTerms energy = compute_total_energy(

@@ -38,7 +38,7 @@ struct SCFOptions {
     int nspin = 1;
     double starting_magnetization = 0.0;
 
-    LDAFunctional lda_functional = LDAFunctional::PerdewZunger;
+    XCFunctional xc_functional = XCFunctional::PerdewZunger;
 
     OccupationMode occupation_mode = OccupationMode::FermiDirac;
     std::vector<double> fixed_occupations;

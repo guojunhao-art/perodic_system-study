@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <regex>
 #include <sstream>
@@ -179,18 +180,22 @@ double parse_double_token(
     std::replace(token.begin(), token.end(), 'D', 'E');
     std::replace(token.begin(), token.end(), 'd', 'e');
 
-    try {
-        std::size_t consumed = 0;
-        const double value = std::stod(token, &consumed);
-        if (consumed != token.size()) {
-            throw parse_error(path, "invalid number '" + token + "' in " + context);
-        }
-        return value;
-    } catch (const std::invalid_argument&) {
+    char* end = nullptr;
+    const double value = std::strtod(token.c_str(), &end);
+    if (end == token.c_str() ||
+        end != token.c_str() + token.size()) {
         throw parse_error(path, "invalid number '" + token + "' in " + context);
-    } catch (const std::out_of_range&) {
+    }
+    /*
+     * Old converted UPFs can contain finite subnormal radial tails such as
+     * 1e-315. std::stod reports ERANGE for those on some C libraries even
+     * though retaining the subnormal value (or zero after underflow) is
+     * harmless. Reject only a genuine non-finite overflow.
+     */
+    if (!std::isfinite(value)) {
         throw parse_error(path, "out-of-range number '" + token + "' in " + context);
     }
+    return value;
 }
 
 int parse_int_token(
@@ -258,10 +263,12 @@ bool parse_bool_attribute(
     const std::string value = lowercase(
         required_attribute(attributes, name, tag_name, path)
     );
-    if (value == "true" || value == ".true." || value == ".t." || value == "1") {
+    if (value == "true" || value == ".true." || value == ".t." ||
+        value == "t" || value == "1") {
         return true;
     }
-    if (value == "false" || value == ".false." || value == ".f." || value == "0") {
+    if (value == "false" || value == ".false." || value == ".f." ||
+        value == "f" || value == "0") {
         return false;
     }
     throw parse_error(

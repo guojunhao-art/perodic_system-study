@@ -1,7 +1,7 @@
 <UPF version="2.0.1">
   <PP_HEADER element="Si" pseudo_type="NC" relativistic="no"
-    is_ultrasoft="false" is_paw="false" has_so="false"
-    core_correction="false" functional="SLA PZ NOGX NOGC"
+    is_ultrasoft="F" is_paw="false" has_so="false"
+    core_correction="F" functional="SLA PZ NOGX NOGC"
     z_valence="4.0" wfc_cutoff="20.0" rho_cutoff="80.0"
     l_max="1" l_local="0" mesh_size="5"
     number_of_wfc="2" number_of_proj="2"/>

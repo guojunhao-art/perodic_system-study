@@ -15,13 +15,13 @@ struct PseudopotentialFingerprint {
 };
 
 struct SCFCheckpoint {
-    int format_version = 1;
+    int format_version = 2;
     AtomicStructure structure;
     double ecut_hartree = 0.0;
     std::array<int, 3> fft_grid{{0, 0, 0}};
     int nspin = 1;
     double nelect = 0.0;
-    LDAFunctional lda_functional = LDAFunctional::PerdewZunger;
+    XCFunctional xc_functional = XCFunctional::PerdewZunger;
     double ewald_width_bohr = 0.0;
     double fermi_energy_ha = 0.0;
     std::map<std::string, PseudopotentialFingerprint> pseudopotentials;
